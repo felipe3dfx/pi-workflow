@@ -1082,6 +1082,7 @@ function wrapSettingsMouse(original: PatchMethod) {
 		const { narrow, width, window } = settingsView(this, event.width);
 		const {
 			edge,
+			outer,
 			left,
 			inner,
 			top,
@@ -1094,6 +1095,9 @@ function wrapSettingsMouse(original: PatchMethod) {
 			return { handled: true };
 		}
 		if (narrow && (event.x < left || event.x >= left + inner)) return undefined;
+		// Columns outside the frame, such as those a frame kept from a narrower
+		// terminal leaves to its right, reach no setting.
+		if (event.x < edge || event.x >= edge + outer) return undefined;
 		const row = event.y - top;
 		if (window && (row < 0 || row >= window.lines.length)) return undefined;
 		const y = window ? top + window.row(row) : event.y;

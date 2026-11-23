@@ -432,6 +432,10 @@ test("an open overlay keeps the width and padding it opened with while the termi
 	screen.terminal.columns = 90;
 	const regrown = await layout(wide);
 	assert.deepEqual(regrown, wideOpening);
+	assert.equal(wide.settings.handleMouse(click(85, 3, 90)), undefined);
+	assert.match(plain(wide.settings.render(90))[3], /▸ Setting 0 +on +│$/);
+	assert.equal(wide.settings.handleMouse(click(40, 3, 90))?.handled, true);
+	assert.match(plain(wide.settings.render(90))[3], /▸ Setting 0 +off +│$/);
 	await closeAll(wide);
 
 	screen.terminal.columns = 59;
