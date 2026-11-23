@@ -227,10 +227,7 @@ test("a collapsed Explorer watchdog result shortens the Subagent label before it
 	);
 	const open = result(watchdog);
 	open.setExpanded(true);
-	assert.equal(
-		plain(open, 43)[1],
-		"◆ Subagent explore 5636 timed out 30m 00s",
-	);
+	assert.equal(plain(open, 43)[1], "◆ Subagent explore 5636 timed out 30m 00s");
 });
 
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {

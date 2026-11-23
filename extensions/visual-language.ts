@@ -114,6 +114,14 @@ export function formatDuration(ms: number) {
 	return `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`;
 }
 
+// The width the base's whole-second time took: integer seconds below 10, the shared format above.
+export function legacyDurationWidth(ms: number) {
+	const seconds = Math.floor(Math.max(0, ms) / 1000);
+	return seconds < 10
+		? `${seconds}s`.length
+		: visibleWidth(formatDuration(seconds * 1000));
+}
+
 export function affordance(theme: Theme) {
 	return theme.fg("dim", "›");
 }

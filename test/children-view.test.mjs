@@ -27,6 +27,7 @@ import { renderHeader } from "../extensions/chrome.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -974,6 +975,66 @@ test("a one-line row too tight for its Steer mark and time keeps the full time a
 	);
 	const later = minuteCells.find((cell) => cell.includes("pendi"));
 	assert.match(later, / 1 pending 1m 05s $/, minuteCells.join("\n"));
+});
+
+test("a narrow one-line row keeps its child id when a single space before the time leaves room for the whole Steer label", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const terminal = densityTerminal(t, 44);
+	const worker = record("5636", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const cells = listCells(
+		open(fakeSessions([worker], { [worker.id]: { entries: [] } }), {
+			rows: 10,
+		}).lines(44),
+	);
+	assert.ok(
+		cells.includes(" ▸ ✓ worker 5636 1 steer undelivered 3.2s "),
+		cells.join("\n"),
+	);
+	terminal.columns = 41;
+	const explore = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const exploreCells = listCells(
+		open(fakeSessions([explore], { [explore.id]: { entries: [] } }), {
+			rows: 10,
+		}).lines(41),
+	);
+	assert.ok(
+		exploreCells.some(
+			(cell) =>
+				cell.startsWith(" ▸ ◐ explore 5636 ") &&
+				cell.endsWith(" 1 steer pending 3.2s "),
+		),
+		exploreCells.join("\n"),
+	);
+});
+
+test("a one-line row with an incomplete transcript keeps a whole Steer label and time and leaves the warning to the detail when it cannot fit", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	for (const [fields, label] of [
+		[{ undelivered: ["late"] }, "1 undelivered"],
+		[{ steering: ["focus on the parser"] }, "1 pending"],
+	]) {
+		const child = record("27c1", { startedAt: now - 65_000, ...fields });
+		const capture = audited(t, [child], { parent: undefined });
+		const view = open(fakeSessions([child]), {
+			rows: 10,
+			audit: capture.audit,
+		});
+		await settle(view);
+		const cells = listCells(view.lines(72));
+		const row = cells.find((cell) => cell.includes("1m 05s"));
+		assert.ok(row?.endsWith(` ${label} 1m 05s `), cells.join("\n"));
+		assert.doesNotMatch(row, /…|partial|incomplete/);
+	}
 });
 
 test("a saturated second line keeps the full time, then compacts Steer labels, then drops cost, then tokens", (t) => {
