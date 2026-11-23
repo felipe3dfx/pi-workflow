@@ -1951,7 +1951,8 @@ test("below 60 terminal columns each description sits below its label, the curso
 				"     Start with a small test group and",
 				"     monitor results.",
 				"  2  Full rollout",
-				"     Make the change available to every…",
+				"     Make the change available to",
+				"     everyone immediately.",
 				"  3  Wait",
 				"",
 				"  z  Type your answer",
@@ -1988,6 +1989,111 @@ test("below 60 terminal columns the panel keeps within half the terminal height,
 		"│      monitor results.                    │",
 		"│      ↓ 2 more                            │",
 	]);
+	send("X");
+	await pending;
+});
+
+test("at 43x31 a focused middle option keeps its description below its label within half the terminal height, giving up blank rows and then separate more rows", async (t) => {
+	densityTerminal(t, 43);
+	const options = [
+		{ label: "Canary", description: "Ship to one region first." },
+		{ label: "Gradual rollout", description: "Track errors." },
+		{ label: "Full rollout", description: "Ship everywhere now." },
+	];
+	const hintRows = [
+		"↑/↓ move · Space mark",
+		"Enter select at least one",
+		"z edit free text · Esc panel stays open",
+		"Shift+X dismiss",
+	];
+	const shown = async (question, expected) => {
+		const tool = createAskUserChoiceTool(createFooterHints());
+		const { ctx, send, renderRaw } = tuiContext(31);
+		const pending = tool.execute(
+			"call-narrow-middle",
+			{ question, options, multiple: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+		send(DOWN);
+		assert.deepEqual(
+			renderRaw(43).map((line) => stripTerminalSequences(line)),
+			boxed(expected, 39),
+		);
+		send("X");
+		await pending;
+	};
+	await shown(
+		"The staging rollout passed but two background jobs still use the old schema. Which rollout should we use?",
+		[
+			"The staging rollout passed but two",
+			"background jobs still use the old",
+			"schema. Which rollout should we use?",
+			"",
+			"         ↑ 1 more",
+			"▸ [ ] 2  Gradual rollout",
+			"         Track errors.",
+			"         ↓ 1 more",
+			"      z  Type your answer",
+			...hintRows,
+		],
+	);
+	await shown(
+		"The staging rollout passed but two background jobs still use the old schema, and the nightly export reads both tables while the billing worker writes only the new one.",
+		[
+			"The staging rollout passed but two",
+			"background jobs still use the old",
+			"schema, and the nightly export reads",
+			"both tables while the billing worker",
+			"writes only the new one.",
+			"▸ [ ] 2  Gradual rollout",
+			"         Track errors.",
+			"         ↑ 1 · ↓ 1 more",
+			"      z  Type your answer",
+			...hintRows,
+		],
+	);
+});
+
+test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-wrap",
+		{
+			question: "Which rollout should we use?",
+			options: [
+				{ label: "Gradual rollout", description: "Watch it." },
+				rollout.options[1],
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"Which rollout should we use?",
+				"",
+				"▸ 1  Gradual rollout",
+				"     Watch it.",
+				"  2  Full rollout",
+				"     Make the change available to",
+				"     everyone immediately.",
+				"",
+				"  z  Type your answer",
+				"",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			39,
+		),
+	);
 	send("X");
 	await pending;
 });

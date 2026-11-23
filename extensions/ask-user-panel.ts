@@ -252,41 +252,55 @@ async function askPanel(
 									]
 								: lines;
 						let wrapped: [string[], string[]] | undefined;
-						const optionRows = (
-							i: number,
-							limit = Number.POSITIVE_INFINITY,
-						) => {
+						const headOf = (i: number) => {
 							const active = i === index;
-							const description = descriptionOf(i);
 							const mark = multiple
 								? marked.has(i)
 									? strong("[x] ")
 									: theme.fg("dim", "[ ] ")
 								: "";
 							const number = String(i + 1).padStart(numberWidth);
-							const head = `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
+							return `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
+						};
+						// Narrow, an option is its label lines over its description lines.
+						const stack = (i: number) => ({
+							label:
+								i === index && labelWidth >= minLabel
+									? wrapTextWithAnsi(labels[i], labelWidth)
+									: [truncateToWidth(labels[i], labelWidth, "…")],
+							below: described(i)
+								? wrapTextWithAnsi(descriptionOf(i), descriptionWidth)
+								: [],
+						});
+						const stackRows = (i: number, limit: number) => {
+							const { label, below } = stack(i);
+							const keep = Math.max(
+								1,
+								Math.min(label.length, limit - Math.min(below.length, 1)),
+							);
+							const room = Math.min(below.length, Math.max(0, limit - keep));
+							const style = (text: string) =>
+								i === index ? strong(text) : theme.fg("text", text);
+							return [
+								...cut(label, labelWidth, keep).map(
+									(line, k) => `${k === 0 ? headOf(i) : indent}${style(line)}`,
+								),
+								...(room === 0
+									? []
+									: room === 1 && below.length > 1
+										? [truncateToWidth(descriptionOf(i), descriptionWidth, "…")]
+										: cut(below, descriptionWidth, room)
+								).map((line) => `${indent}${theme.fg("dim", line)}`),
+							];
+						};
+						const optionRows = (
+							i: number,
+							limit = Number.POSITIVE_INFINITY,
+						) => {
+							const active = i === index;
+							const description = descriptionOf(i);
+							const head = headOf(i);
 							const shown = described(i);
-							if (narrow) {
-								const style = (text: string) =>
-									active ? strong(text) : theme.fg("text", text);
-								if (!active || labelWidth < minLabel || limit < 2)
-									return [
-										`${head}${style(truncateToWidth(labels[i], labelWidth, "…"))}`,
-										...(shown && limit >= 2
-											? [
-													`${indent}${theme.fg("dim", truncateToWidth(description, descriptionWidth, "…"))}`,
-												]
-											: []),
-									];
-								const label = wrapTextWithAnsi(labels[i], labelWidth);
-								const below = shown
-									? wrapTextWithAnsi(description, descriptionWidth)
-									: [];
-								return cut([...label, ...below], labelWidth, limit).map(
-									(line, k) =>
-										`${k === 0 ? head : indent}${k < label.length ? strong(line) : theme.fg("dim", line)}`,
-								);
-							}
 							if (!active || labelWidth < minLabel || limit < 2) {
 								const label = truncateToWidth(labels[i], labelWidth, "…", true);
 								const tail = shown
@@ -341,75 +355,146 @@ async function askPanel(
 						const inside = narrow
 							? keyHintRows(theme, shownHints, contentWidth)
 							: [];
-						if (options.length > 0) {
-							const budget = Math.max(
-								1,
-								Math.floor(tui.terminal.rows / 2) -
-									(framed ? 2 : 0) -
-									questionLines.length -
-									3 -
-									(inside.length > 0 ? inside.length + 1 : 0),
+						const focus = Math.min(index, options.length - 1);
+						const span = (visible: number) => {
+							const first = Math.min(
+								Math.max(0, focus - Math.floor(visible / 2)),
+								options.length - visible,
 							);
-							const focus = Math.min(index, options.length - 1);
-							const span = (visible: number) => {
-								const first = Math.min(
-									Math.max(0, focus - Math.floor(visible / 2)),
-									options.length - visible,
-								);
-								return [first, first + visible];
+							return [first, first + visible];
+						};
+						const more = (count: string) => {
+							const long = `${count} more`;
+							const text = visibleWidth(long) <= contentWidth ? long : count;
+							const indent =
+								prefixWidth + visibleWidth(text) <= contentWidth
+									? prefixWidth
+									: 0;
+							return theme.fg("dim", `${" ".repeat(indent)}${text}`);
+						};
+						// One narrow row plan sizes and renders the panel within half the terminal
+						// height (ADR 0019): the focused label and description come first, then
+						// blank rows go, then the two more rows share one.
+						const narrowRows = () => {
+							if (options.length === 0)
+								return [freeRow, ...(inside.length > 0 ? ["", ...inside] : [])];
+							const gapsMax = inside.length > 0 ? 3 : 2;
+							const budget =
+								Math.floor(tui.terminal.rows / 2) -
+								(framed ? 2 : 0) -
+								questionLines.length -
+								1 -
+								inside.length;
+							const whole = (i: number) => {
+								const { label, below } = stack(i);
+								return label.length + below.length;
 							};
-							// An unfocused row takes one line, two narrow when its description shows below.
-							const short = (i: number) => (narrow && described(i) ? 2 : 1);
-							const height = (visible: number, tall: number) => {
+							const least = (i: number) => (described(i) ? 2 : 1);
+							const cues = (visible: number, shared: boolean) => {
 								const [first, last] = span(visible);
-								let rows =
+								const count =
 									(first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
+								return shared ? Math.min(count, 1) : count;
+							};
+							const need = (visible: number, shared: boolean) => {
+								const [first, last] = span(visible);
+								let rows = cues(visible, shared);
 								for (let i = first; i < last; i++)
-									rows += i === index ? tall : short(i);
+									rows += i === index ? whole(i) : least(i);
 								return rows;
 							};
-							const tall = active ? 1 : optionRows(index).length;
-							let visible =
-								height(options.length, tall) <= budget
-									? options.length
-									: Math.max(1, budget - tall - 1);
-							while (visible > 1 && height(visible, tall) > budget) visible--;
-							if (
-								visible + 1 < options.length &&
-								height(visible + 1, tall) <= budget
-							)
-								visible++;
-							if (height(options.length, 1) <= height(visible, 1))
-								visible = options.length;
-							const activeRows = active
-								? []
-								: optionRows(
-										index,
-										Math.max(1, budget - height(visible, 1) + 1),
+							let plan = { gaps: 0, shared: true, visible: 1 };
+							search: for (let gaps = gapsMax; gaps >= -1; gaps--)
+								for (let visible = options.length; visible >= 1; visible--)
+									if (need(visible, gaps < 0) <= budget - Math.max(gaps, 0)) {
+										plan = {
+											gaps: Math.max(gaps, 0),
+											shared: gaps < 0,
+											visible,
+										};
+										break search;
+									}
+							const [first, last] = span(plan.visible);
+							let spare = budget - plan.gaps - need(plan.visible, plan.shared);
+							const limits = new Map<number, number>();
+							for (let i = first; i < last; i++) {
+								if (i === index) {
+									limits.set(
+										i,
+										Math.max(least(i), whole(i) + Math.min(spare, 0)),
 									);
-							const [first, last] = span(visible);
-							const more = (arrow: string, count: number) => {
-								const long = `${arrow} ${count} more`;
-								const text =
-									visibleWidth(long) <= contentWidth
-										? long
-										: `${arrow} ${count}`;
-								const indent =
-									prefixWidth + visibleWidth(text) <= contentWidth
-										? prefixWidth
-										: 0;
-								return theme.fg("dim", `${" ".repeat(indent)}${text}`);
-							};
-							body.push("");
-							if (first > 0) body.push(more("↑", first));
+									continue;
+								}
+								const grow = whole(i) - least(i);
+								const wraps = grow > 0 && grow <= spare;
+								if (wraps) spare -= grow;
+								limits.set(i, wraps ? whole(i) : least(i));
+							}
+							const above = first > 0 ? `↑ ${first}` : "";
+							const beneath =
+								last < options.length ? `↓ ${options.length - last}` : "";
+							const rows: string[] = [];
+							if (plan.gaps >= 1) rows.push("");
+							const joint = plan.shared && above && beneath;
+							if (above && !joint) rows.push(more(above));
 							for (let i = first; i < last; i++)
-								body.push(...(i === index ? activeRows : optionRows(i)));
-							if (last < options.length)
-								body.push(more("↓", options.length - last));
-							body.push("");
+								rows.push(...stackRows(i, limits.get(i) ?? 1));
+							const tail = joint ? `${above} · ${beneath}` : beneath;
+							if (tail) rows.push(more(tail));
+							if (plan.gaps >= gapsMax) rows.push("");
+							rows.push(freeRow);
+							if (inside.length > 0 && plan.gaps >= 2) rows.push("");
+							return [...rows, ...inside];
+						};
+						if (narrow) body.push(...narrowRows());
+						else {
+							if (options.length > 0) {
+								const budget = Math.max(
+									1,
+									Math.floor(tui.terminal.rows / 2) -
+										(framed ? 2 : 0) -
+										questionLines.length -
+										3,
+								);
+								const height = (visible: number, tall: number) => {
+									const [first, last] = span(visible);
+									return (
+										visible -
+										1 +
+										tall +
+										(first > 0 ? 1 : 0) +
+										(last < options.length ? 1 : 0)
+									);
+								};
+								const tall = active ? 1 : optionRows(index).length;
+								let visible =
+									options.length - 1 + tall <= budget
+										? options.length
+										: Math.max(1, budget - tall - 1);
+								if (
+									visible + 1 < options.length &&
+									height(visible + 1, tall) <= budget
+								)
+									visible++;
+								if (options.length <= height(visible, 1))
+									visible = options.length;
+								const activeRows = active
+									? []
+									: optionRows(
+											index,
+											Math.max(1, budget - height(visible, 1) + 1),
+										);
+								const [first, last] = span(visible);
+								body.push("");
+								if (first > 0) body.push(more(`↑ ${first}`));
+								for (let i = first; i < last; i++)
+									body.push(...(i === index ? activeRows : optionRows(i)));
+								if (last < options.length)
+									body.push(more(`↓ ${options.length - last}`));
+								body.push("");
+							}
+							body.push(freeRow);
 						}
-						body.push(freeRow);
-						if (inside.length > 0) body.push("", ...inside);
 						const lines = body.map(row);
 						if (framed) {
 							const caption =
