@@ -1248,9 +1248,9 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 	const card = advisorRow(t, 9_000, "one\n\ntwo\n\nthree");
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
-	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
+	const head = lines.findIndex((line) => line.startsWith("◆ Advisor "));
 	assert.deepEqual(lines.slice(head, head + 3), [
-		`◇ Advisor 9.0s${" ".repeat(27)}›`,
+		`◆ Advisor 9.0s${" ".repeat(27)}›`,
 		"  claude-opus-5 (high)",
 		"  one",
 	]);

@@ -372,7 +372,7 @@ test("every card line fits its width, and hostile model, thinking, and advice ca
 	check();
 });
 
-const narrowHead = `◇ Advisor 12s${" ".repeat(28)}›`;
+const narrowHead = `◆ Advisor 12s${" ".repeat(28)}›`;
 
 test("below 60 terminal columns a finished consultation shows Advisor 12s ›, the model on its own dim row and the +N lines tail", async (t) => {
 	const card = await advisorCard(t);
@@ -398,20 +398,20 @@ test("below 60 terminal columns a running, failed or short consultation keeps th
 	densityTerminal(t, 44);
 	assert.deepEqual(plain(card({ partial: model }), 43), [
 		"",
-		"◇ Advisor consulting…",
+		"◆ Advisor consulting…",
 		"  claude-opus-5 (high)",
 	]);
 	const broken = failed("provider", "401 invalid x-api-key");
 	broken.final.durationMs = 12_000;
 	assert.deepEqual(plain(card(broken), 43), [
 		"",
-		"◇ Advisor failed 12s",
+		"◆ Advisor failed 12s",
 		"  claude-opus-5 (high)",
 		"  401 invalid x-api-key",
 	]);
 	assert.deepEqual(plain(card(done("- one\n- two", 12_000)), 43), [
 		"",
-		"◇ Advisor 12s",
+		"◆ Advisor 12s",
 		"  claude-opus-5 (high)",
 		"  - one",
 		"  - two",
@@ -462,7 +462,7 @@ test("below 60 terminal columns an aborted consultation reads cancelled in the m
 	const narrow = () => {
 		assert.deepEqual(plain(aborted(), 43), [
 			"",
-			"◇ Advisor cancelled 3.0s",
+			"◆ Advisor cancelled 3.0s",
 			"  claude-opus-5 (high)",
 			"  Advisor consultation stopped by the",
 			"  operator.",
@@ -483,6 +483,33 @@ test("below 60 terminal columns an aborted consultation reads cancelled in the m
 	narrow();
 	terminal.columns = 100;
 	wide();
+});
+
+test("below 60 terminal columns the advisor glyph is ◆ in its phase tone, accent once done, and 60 columns or more keeps ◇", async (t) => {
+	const card = await advisorCard(t);
+	const terminal = densityTerminal(t, 44);
+	const phases = [
+		[{ partial: model }, `${cyan}◆`],
+		[done(advice, 12_000), theme().fg("accent", "◆")],
+		[failed("provider", "401 invalid x-api-key"), theme().fg("error", "◆")],
+		[failed("aborted", "Stopped."), theme().fg("muted", "◆")],
+		[failed("refused", "Advisor is disabled."), theme().fg("dim", "◆")],
+	];
+	for (const [steps, glyph] of phases) {
+		const head = card(steps).render(43)[1];
+		assert.ok(head.startsWith(glyph), JSON.stringify(head));
+	}
+	assert.equal(plain(card(done(advice, 12_000)), 43)[1], narrowHead);
+	const finished = card(done(advice, 12_000));
+	terminal.columns = 60;
+	assert.deepEqual(finished.render(59), wideCards.advisor.collapsed[59]);
+	terminal.columns = 59;
+	assert.ok(
+		finished.render(58)[1].startsWith(theme().fg("accent", "◆")),
+		finished.render(58)[1],
+	);
+	terminal.columns = 60;
+	assert.deepEqual(finished.render(59), wideCards.advisor.collapsed[59]);
 });
 
 test("at 60 and 100 terminal columns the advisor card renders the base's bytes in every phase", async (t) => {
