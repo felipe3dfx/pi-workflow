@@ -753,9 +753,40 @@ function wrapRenderToken(original: PatchMethod) {
 	} as PatchMethod;
 }
 
+type BashRow = {
+	children: Component[];
+	contentContainer: Container;
+	outputPad: number;
+};
+
+function narrowBash(row: BashRow, width: number) {
+	const body = Math.max(1, width - 2);
+	return row.children.flatMap((child) => {
+		if (child !== row.contentContainer) return child.render(width);
+		return row.contentContainer.children.flatMap((part, i) => {
+			const pad = (part as { paddingX?: number }).paddingX ?? row.outputPad;
+			const room = i === 0 ? width : body;
+			return part.render(room + 2 * pad).map((line) => {
+				const fitted = truncateToWidth(
+					line.startsWith(" ".repeat(pad)) ? line.slice(pad) : line,
+					room,
+					"",
+				);
+				return i === 0 ? fitted : lane() + fitted;
+			});
+		});
+	});
+}
+
 function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
 		const { left, width } = blockMargin(assistantInset, outer);
+		if (
+			narrowScreen() &&
+			this instanceof BashExecutionComponent &&
+			(this as unknown as BashRow).contentContainer instanceof Container
+		)
+			return narrowBash(this as unknown as BashRow, width);
 		const lines = (original as (width: number) => readonly string[]).call(
 			this,
 			width,

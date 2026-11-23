@@ -1096,11 +1096,40 @@ test("below 60 terminal columns tool and bash rows put their glyph in the lane a
 	const bash = new BashExecutionComponent("ls", { requestRender() {} });
 	bash.appendOutput("hello world");
 	bash.setComplete(0, false);
-	const bare = { tool: plain(tool.render(42)), bash: plain(bash.render(42)) };
+	const bare = plain(tool.render(42));
 	patched(t);
 	densityTerminal(t, 44);
-	assert.deepEqual(plain(tool.render(43)), bare.tool);
-	assert.deepEqual(plain(bash.render(43)), bare.bash);
+	assert.deepEqual(plain(tool.render(43)), bare);
+	const border = "─".repeat(42);
+	const lines = plain(bash.render(43));
+	assert.deepEqual(
+		lines.map((line) => line.trimEnd()),
+		["", border, "$ ls", "", "  hello world", border],
+	);
+	for (const line of lines) assert.ok(visibleWidth(line) <= 42, line);
+});
+
+test("below 60 terminal columns native Bash keeps its streaming, preview, expansion and exit status with the output after the lane", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const bash = new BashExecutionComponent("make", { requestRender() {} });
+	t.after(() => bash.loader.stop());
+	bash.appendOutput("step 1");
+	const running = plain(bash.render(43)).map((line) => line.trimEnd());
+	assert.deepEqual(running.slice(2, 5), ["$ make", "", "  step 1"]);
+	assert.match(running[6], /^ {2}\S Running\.\.\./, running.join("\n"));
+	bash.appendOutput(
+		`\n${Array.from({ length: 24 }, (_, i) => `line ${i}`).join("\n")}`,
+	);
+	bash.setComplete(2, false);
+	const collapsed = plain(bash.render(43)).map((line) => line.trimEnd());
+	assert.equal(collapsed.filter((line) => /^ {2}line /.test(line)).length, 20);
+	assert.ok(collapsed.some((line) => /^ {2}\.\.\. 5 more lines/.test(line)));
+	assert.ok(collapsed.includes("  (exit 2)"));
+	bash.setExpanded(true);
+	const expanded = plain(bash.render(43)).map((line) => line.trimEnd());
+	assert.equal(expanded.filter((line) => /^ {2}line /.test(line)).length, 24);
+	assert.ok(expanded.includes("  step 1"));
 });
 
 test("only the terminal's columns decide the density, whatever width the component is given", (t) => {
