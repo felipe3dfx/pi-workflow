@@ -143,6 +143,48 @@ test("below 60 terminal columns an expanded result keeps its whole time beside i
 	);
 });
 
+test("a result header too tight for its metadata keeps the whole time and the pinned › before its gap and its model", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 39);
+	const partial = {
+		...details,
+		verdict: "partial",
+		result: { verdict: "partial", reason: "Database access is missing" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 3_240,
+	};
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	assert.equal(
+		plain(result(partial), 38)[1],
+		"◆ Subagent worker 5636 partial 3.2s ›",
+	);
+	terminal.columns = 60;
+	const expanded = result(partial);
+	expanded.setExpanded(true);
+	assert.equal(
+		plain(expanded, 59)[1],
+		"   ◆ Subagent worker 5636 partial claude-opus-4-6 · 3.2s",
+	);
+	terminal.columns = 44;
+	const watchdog = {
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subagent worker 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(plain(open, 43)[1], "◆ Subagent worker 5636 timed out 30m 00s");
+});
+
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
 	assert.deepEqual(

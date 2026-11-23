@@ -105,11 +105,20 @@ function header(
 	const meta = [model, time].filter(Boolean).join(" · ");
 	if (!meta) return line;
 	const full = `${line}  ${theme.fg("dim", meta)}`;
-	if (!model || !time || !narrowScreen() || visibleWidth(full) <= width)
-		return full;
-	// The narrow lane keeps the whole time: one space before the metadata, then a shorter model.
+	if (!time || visibleWidth(full) <= width) return full;
+	// Wide rows keep the base's layout unless the base's whole seconds fit where the new time does not.
+	const seconds = Math.floor(Math.max(0, card.elapsedMs ?? 0) / 1000);
+	const grown = seconds < 60 ? visibleWidth(time) - `${seconds}s`.length : 0;
+	if (!narrowScreen() && visibleWidth(full) - grown > width) return full;
+	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none.
+	const tight = `${line} ${theme.fg("dim", meta)}`;
+	if (visibleWidth(tight) <= width) return tight;
 	const room = width - visibleWidth(line) - 1 - visibleWidth(` · ${time}`);
-	return `${line} ${theme.fg("dim", `${truncateToWidth(model, Math.max(0, room), "…")} · ${time}`)}`;
+	const short =
+		model &&
+		room > 1 &&
+		truncateToWidth(model, room, narrowScreen() ? "…" : "...");
+	return `${line} ${theme.fg("dim", short ? `${short} · ${time}` : time)}`;
 }
 
 export function clean(text: string) {
@@ -269,7 +278,9 @@ class ResultCard implements Component {
 			narrow ? wrapTextWithAnsi(t.fg("dim", text), inner) : [t.fg("dim", text)];
 		return frame(
 			outer,
-			(width) => header(t, this.card, this.question, open, width),
+			// A pinned › takes the row's last cell and the space before it.
+			(width) =>
+				header(t, this.card, this.question, open, pinned ? width - 2 : width),
 			hint,
 			(inner) => {
 				const lines: string[] = [];
