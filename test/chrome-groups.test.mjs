@@ -898,24 +898,10 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 	}
 });
 
-const markdownAnswer = [
-	"Plan:",
-	"",
-	"- one",
-	"  - two",
-	"    - three deep item that wraps across a phone width",
-	"- four",
-	"",
-	"```ts",
-	"const answer = compute(1, 2);",
-	"  return answer;",
-	"const veryLongIdentifierNameThatCannotBreakAnywhereAtAll = 1;",
-	"```",
-	"",
-	"| Key | Value |",
-	"| --- | ----- |",
-	"| a   | one   |",
-].join("\n");
+const markdownAnswer = readFileSync(
+	new URL("./fixtures/assistant-markdown.md", import.meta.url),
+	"utf8",
+).trimEnd();
 
 test("at 60 and 100 terminal columns assistant Markdown lists, code blocks and tables render the base's bytes", (t) => {
 	setCapabilityOverrides({ trueColor: true, hyperlinks: false });

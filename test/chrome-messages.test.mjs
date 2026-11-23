@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -105,11 +106,16 @@ function assistant(content, overrides = {}) {
 	};
 }
 
-function assistantComponent(hidden, label = "Thinking...", outputPad = 1) {
+function assistantComponent(
+	hidden,
+	label = "Thinking...",
+	outputPad = 1,
+	theme = markdownTheme,
+) {
 	return new AssistantMessageComponent(
 		undefined,
 		hidden,
-		markdownTheme,
+		theme,
 		label,
 		outputPad,
 		[],
@@ -136,34 +142,13 @@ const plainMarkdown = {
 	underline: identity,
 	strikethrough: identity,
 };
-const nested = [
-	"Plan:",
-	"",
-	"- one",
-	"  - two",
-	"    - three deep item that wraps across a phone width",
-	"- four",
-	"",
-	"```ts",
-	"const answer = compute(1, 2);",
-	"  return answer;",
-	"const veryLongIdentifierNameThatCannotBreakAnywhereAtAll = 1;",
-	"```",
-	"",
-	"| Key | Value |",
-	"| --- | ----- |",
-	"| a   | one   |",
-].join("\n");
+const nested = readFileSync(
+	new URL("./fixtures/assistant-markdown.md", import.meta.url),
+	"utf8",
+).trimEnd();
 
-function markdownAnswer(markdown, hidden = true) {
-	return new AssistantMessageComponent(
-		undefined,
-		hidden,
-		markdown,
-		"Thinking...",
-		1,
-		[],
-	);
+function markdownAnswer(theme, hidden = true) {
+	return assistantComponent(hidden, undefined, undefined, theme);
 }
 
 test("the user message is a prompt block on userMessageBg with a right-aligned timestamp that drops when the width cannot fit it", (t) => {

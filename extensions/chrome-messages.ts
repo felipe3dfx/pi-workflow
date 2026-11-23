@@ -387,12 +387,12 @@ function markdownTransform(
 
 const COMPACT = Symbol.for("pi-workflow:chrome-messages:compact-markdown");
 
-function compactBelowNarrow(markdown: Markdown) {
+function markCompactMarkdown(markdown: Markdown) {
 	(markdown as unknown as Record<symbol, boolean>)[COMPACT] = true;
 	return markdown;
 }
 
-function compacted(markdown: unknown) {
+function shouldCompactMarkdown(markdown: unknown) {
 	return (
 		narrowScreen() &&
 		(markdown as Record<symbol, boolean> | undefined)?.[COMPACT] === true
@@ -415,7 +415,7 @@ function expandedThinking(
 	body.addChild(header);
 	body.addChild(new Spacer(1));
 	body.addChild(
-		compactBelowNarrow(
+		markCompactMarkdown(
 			new Markdown(
 				blocks.join("\n\n"),
 				0,
@@ -466,7 +466,7 @@ function updateContent(
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
-			const markdown = compactBelowNarrow(
+			const markdown = markCompactMarkdown(
 				new Markdown(
 					content.text.trim(),
 					0,
@@ -805,7 +805,6 @@ type ListToken = {
 };
 type MarkdownSelf = {
 	theme: MarkdownTheme;
-	blockHighlightedCode?: Map<string, string[]>;
 	renderToken(
 		token: MarkdownToken,
 		width: number,
@@ -822,22 +821,27 @@ type MarkdownSelf = {
 
 const codeRail = "▎";
 
+// Pi draws the code rows, highlighted or not, without indent and without a
+// successor; only its two fence rows are dropped.
 function railedCode(
 	self: MarkdownSelf,
+	render: (...args: unknown[]) => unknown,
 	token: CodeToken,
 	width: number,
 	nextTokenType: string | undefined,
+	styleContext: unknown,
 ) {
-	const { theme: md } = self;
+	const saved = self.theme;
 	let code: string[];
-	if (md.highlightCode) {
-		const key = `${token.lang ?? ""}\0${token.text}`;
-		code =
-			self.blockHighlightedCode?.get(key) ??
-			md.highlightCode(token.text, token.lang);
-		self.blockHighlightedCode?.set(key, code);
-	} else code = token.text.split("\n").map((line) => md.codeBlock(line));
-	const rail = `${md.codeBlockBorder(codeRail)} `;
+	try {
+		self.theme = { ...saved, codeBlockIndent: "" };
+		code = (
+			render.call(self, token, width, undefined, styleContext) as string[]
+		).slice(1, -1);
+	} finally {
+		self.theme = saved;
+	}
+	const rail = `${saved.codeBlockBorder(codeRail)} `;
 	const room = Math.max(1, width - visibleWidth(rail));
 	const lines = code.flatMap((line) =>
 		wrapTextWithAnsi(line, room).map((row) => rail + row),
@@ -902,7 +906,7 @@ function wrapRenderList(original: PatchMethod) {
 		this: MarkdownSelf,
 		...args: Parameters<typeof compactList>
 	) {
-		const render = compacted(this)
+		const render = shouldCompactMarkdown(this)
 			? compactList
 			: (original as unknown as typeof compactList);
 		return render.apply(this, args);
@@ -916,12 +920,14 @@ function wrapRenderToken(original: PatchMethod) {
 		...rest: unknown[]
 	) {
 		const render = original as (...args: unknown[]) => unknown;
-		if (token?.type === "code" && compacted(this))
+		if (token?.type === "code" && shouldCompactMarkdown(this))
 			return railedCode(
 				this,
+				render,
 				token as CodeToken,
 				rest[0] as number,
 				rest[1] as string | undefined,
+				rest[2],
 			);
 		const palette = initializedTheme();
 		const saved = this.theme;
