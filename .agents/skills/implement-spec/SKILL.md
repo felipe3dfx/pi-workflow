@@ -4,7 +4,7 @@ description: "Trigger: implement a whole approved specification on its parent in
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.9"
+  version: "3.12"
   provenance: derived
 ---
 
@@ -29,7 +29,7 @@ Read the specification, its child tickets and their blockers, and the consumer w
 
 1. **Graph.** Build the task graph. The frontier is every open, approved ticket not yet integrated on the parent whose blockers are closed. Recompute it from the parent's history and the tracker: a ticket whose `Refs:` merge commit is on the parent is integrated and never merged again.
 2. **Batch rule.** Present one plan: the frontier, the graph's order, and the rule. Frontier tickets that extend the same ordered sequence their tickets identify, such as one app's migration prefixes, are serialized in graph order: each starts only after the previous one integrates. Never infer a shared sequence from similar files. A ticket integrates only when its `implement` handoff meets [that skill's completion line](../implement/SKILL.md#output-contract) and the merged tree passes the focused checks the merge's impact calls for; an incomplete handoff returns to the child; integration closes the ticket; one already integrated but still open closes on approval, and the frontier is recomputed. Approval covers the rule, never a diff.
-3. **Implement.** For each frontier ticket, create its child branch from the current parent head; when it already exists, read [existing child branch](references/existing-child-branch.md) first. Implement it in a fresh context receiving "Load the `implement` skill as a child of `implement-spec`". Siblings the plan does not serialize may run in parallel. Never create a child's checkpoint commit; validate the committed SHA and evidence its handoff returns.
+3. **Implement.** For each frontier ticket, create its child branch from the current parent head; when it already exists, read [existing child branch](references/existing-child-branch.md) first. Implement it in a fresh context receiving "Load the `implement` skill as a child of `implement-spec`". Before starting a child, read [child worktrees](references/child-worktrees.md). Never create a child's checkpoint commit; validate the committed SHA and evidence its handoff returns.
 4. **Integrate.** When a handoff meets the rule, merge the child branch into the parent with `git merge --no-ff --no-commit` and run those focused checks on the merged tree, never the full suite. Only when green, commit the merge following the commit template with the ticket's identifier in `Refs:`, then close the ticket and confirm the tracker shows it closed. Surface a signing failure as is, never bypassing it. On a conflict or red checks, abort the merge so the parent stays at its last integrated head.
 5. **Advance.** After each integration, recompute the frontier and start its new tickets at step 3, until it holds only stopped tickets; the run ends incomplete unless every ticket is integrated and closed.
 6. **Review the parent.** In a fresh context receiving "Load the `code-review` skill", review the parent branch against the specification with the production base as the fixed point. This first review is full. Its Spec axis establishes coverage; Valuable Tests receives, per requirement, its latest line from the children's tables, never one the orchestrator writes. Before this review, read [the children's findings register](references/findings-register.md); this review and every parent re-review and critique receive it. A blocked axis in any parent review stops the parent, and the developer's decision is published as an append-only Spanish accepted-risk comment on the parent ticket before any re-review or push.
@@ -48,6 +48,7 @@ A prose report with:
 - each stopped ticket and what stops it;
 - the parent review's head, each finding's verdict, and what was applied;
 - the `create-pr` result and `qa-impact` status and comment on the pushed head;
-- blockers or the cancellation point.
+- blockers or the cancellation point;
+- a retrospective; read [retrospective](references/retrospective.md) first.
 
 Complete only when every ticket is integrated and closed, the parent review's findings are at a verdict, and `create-pr` and the published `qa-impact` comment name the same head.

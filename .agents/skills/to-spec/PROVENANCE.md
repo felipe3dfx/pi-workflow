@@ -63,6 +63,8 @@ hands the parent to `to-tickets`; and loads `codebase-design` by name.
 
 Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
 
+Under issue #244, version 1.8 adds a pointer to a new `references/agent-files.md`, read when the tracker playbook has a "Ticket Body and Agent Attachments" section, which today is Linear. There the parent is a Spanish summary issue that carries the specification, the brief, and the report as files, never as its body or a comment, and `PUBLISHED` additionally requires the parent's files to pass that section's published check. The main skill's rules for other trackers are unchanged.
+
 ## Upstream review
 
 2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/to-spec) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.

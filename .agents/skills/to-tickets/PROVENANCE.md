@@ -115,6 +115,8 @@ to this repository's required shape.
 
 Under issue #165, approvals with no pull-request playbook block and point to `setup-workflow` instead of linking its shipped rules.
 
+Under issue #244, version 1.9 points the ticket template and the publication reference at the tracker playbook's "Ticket Body and Agent Attachments" section when the playbook has one: the body states decided behavior without decision codes, and decision sources and detail the specification lacks go in an attached agent file. The skill body is unchanged.
+
 ## Upstream review
 
 2026-11-01: reviewed [`mattpocock-skills` v1.3.2](https://github.com/mattpocock/skills/tree/d1478fcb140db0b93c0c8df17bcfd311844749d0/skills/engineering/to-tickets) at commit `d1478fcb140db0b93c0c8df17bcfd311844749d0`. This is the reviewed reference, not a replacement for the adopted source revisions above.

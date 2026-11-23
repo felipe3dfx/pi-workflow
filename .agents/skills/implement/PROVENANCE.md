@@ -79,6 +79,8 @@ The upstream loop at `d81f3a1`: `tdd` at pre-agreed seams, type checks and singl
 
 28. The completion line requires the requirement-tracing table and every finding rejected, applied, or decided by the developer, so `implement` owns the one definition of a complete handoff that `implement-spec` checks. The references point at `references/decision-recording.md` for the issue-comment rule instead of `SKILL.md`, and the round reference drops its restated copy of that rule.
 
+29. The handoff closes with a retrospective when the ticket has misses: on re-entry, the red publication gate, developer feedback, or red CI that opened the round, and any finding the critique rejected that the developer later had applied, each with its cause and the smallest durable change it suggests, as a proposal only, omitted when there are none; `references/retrospective.md` holds the rule. Step 4 keeps the missing-evidence exception as a short clause, still limited to that block, since `references/missing-evidence.md` already carries its continuation to the handoff.
+
 ## Approval
 
 Internal reuse under the MIT license was approved by the Issue #17 group specification. The `d81f3a1` material is approved through review of the pull request that introduces it.

@@ -82,6 +82,8 @@ The v1.3.2 review, recorded on 2026-11-01, adopted four transformations. The Git
 
 The tracker playbooks record that a comment policy may only reduce or schedule the publishable events and never adds another kind, and that progress and decision comments carry only a scope change, a deviation, an accepted risk, or the pull request link, with technical decisions staying in the commit body. They also record one comment shape no policy overrides: written for a person without the code, in Spanish and domain language, in at most five lines stating the fact, then why, then what changes for the reader; the Linear pull-request comment carries the URL plus one or two lines on what the reader will see change and leaves the evidence in the pull request. The local Markdown playbook has no closure explanation, so its shape paragraph omits the closure clause.
 
+Under issue #244, version 2.18 adds one "Ticket Body and Agent Attachments" section to the Linear tracker playbook: the body is a Spanish domain-language summary for a person who does not read the code, whatever is written for an agent is a file linked from the body, files are uploaded from the local file and downloaded after fetching the issue again, and they are published only when each linked file is identical to the local one. Fetching a Linear ticket reads every file linked from its description and its parent's, and an unreadable one blocks. The GitHub, GitLab, and local Markdown playbooks are unchanged because the agent reads those tickets directly. The approval preview shows a file to upload by its path and role.
+
 ## Approval
 
 Internal reuse under the MIT license was approved through the group specification in Grupo Ilao skills issue #13.
