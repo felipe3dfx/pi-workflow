@@ -1512,11 +1512,14 @@ function createChildrenView(
 					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
 				].join(theme.fg("dim", " · "));
 			const clock = timeOf(item, now);
-			// Overflow keeps the whole time: a single space before it, then a shorter Steer mark.
+			// Overflow keeps the whole time: a single space before it, then the compact Steer label, then a cut one.
 			const tight = () =>
 				[
 					right([clock]),
-					`${theme.fg("warning", marks.join(" · "))} ${theme.fg("dim", clock)}`,
+					...[marks, [...steerMarks(child, true), ...flags]].map(
+						(warn) =>
+							`${theme.fg("warning", warn.join(" · "))} ${theme.fg("dim", clock)}`,
+					),
 				].find((text) => visibleWidth(text) < width) ??
 				`${truncateToWidth(theme.fg("warning", marks.join(" · ")), width - visibleWidth(clock) - 2, "…")} ${theme.fg("dim", clock)}`;
 			const tail =
