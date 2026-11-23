@@ -185,6 +185,54 @@ test("a result header too tight for its metadata keeps the whole time and the pi
 	assert.equal(plain(open, 43)[1], "◆ Subagent worker 5636 timed out 30m 00s");
 });
 
+test("a wide result header keeps a time that grew across a minute rollover with a single space before its model", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 60);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const rollover = result({
+		verdict: "pass",
+		result: { verdict: "pass" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 599_500,
+	});
+	rollover.setExpanded(true);
+	assert.equal(
+		plain(rollover, 59)[1],
+		"   ◆ Subagent worker 5636 pass claude-opus-4-6 · 10m 00s",
+	);
+});
+
+test("a collapsed Explorer watchdog result shortens the Subagent label before its whole time and the pinned ›", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const watchdog = {
+		role: "explore",
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subage… explore 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(
+		plain(open, 43)[1],
+		"◆ Subagent explore 5636 timed out 30m 00s",
+	);
+});
+
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
 	assert.deepEqual(

@@ -32,6 +32,7 @@ import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	affordance,
+	formatDuration,
 	narrowScreen,
 	pinRight,
 	spread,
@@ -84,14 +85,16 @@ function header(
 	open: boolean,
 	width = Number.POSITIVE_INFINITY,
 ) {
-	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
-	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
+	const glyph = theme.fg(tone(card, question), "◆");
+	const label = (text: string) => theme.bold(theme.fg("muted", text));
+	let rest = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	if (question)
-		return `${line} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
+		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
-		line += ` ${theme.fg(tone(card, question), card.state)}`;
+		rest += ` ${theme.fg(tone(card, question), card.state)}`;
 	if (card.verdict)
-		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
+		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
+	const line = `${glyph} ${label("Subagent")} ${rest}`;
 	const model =
 		open &&
 		card.model &&
@@ -107,18 +110,30 @@ function header(
 	const full = `${line}  ${theme.fg("dim", meta)}`;
 	if (!time || visibleWidth(full) <= width) return full;
 	// Wide rows keep the base's layout unless the base's whole seconds fit where the new time does not.
-	const seconds = Math.floor(Math.max(0, card.elapsedMs ?? 0) / 1000);
-	const grown = seconds < 60 ? visibleWidth(time) - `${seconds}s`.length : 0;
-	if (!narrowScreen() && visibleWidth(full) - grown > width) return full;
-	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none.
-	const tight = `${line} ${theme.fg("dim", meta)}`;
+	const legacy = visibleWidth(full) - visibleWidth(time) + legacyTimeWidth(card);
+	if (!narrowScreen() && legacy > width) return full;
+	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none,
+	// then a shorter Subagent label; the role, id and state stay whole.
+	const cut = narrowScreen() ? "…" : "...";
+	const dim = (text: string) => theme.fg("dim", text);
+	const tight = `${line} ${dim(meta)}`;
 	if (visibleWidth(tight) <= width) return tight;
 	const room = width - visibleWidth(line) - 1 - visibleWidth(` · ${time}`);
-	const short =
-		model &&
-		room > 1 &&
-		truncateToWidth(model, room, narrowScreen() ? "…" : "...");
-	return `${line} ${theme.fg("dim", short ? `${short} · ${time}` : time)}`;
+	const short = model && room > 1 && truncateToWidth(model, room, cut);
+	if (short) return `${line} ${dim(`${short} · ${time}`)}`;
+	const timed = `${line} ${dim(time)}`;
+	const labelRoom = width - visibleWidth(`${glyph}  ${rest} ${time}`);
+	if (visibleWidth(timed) <= width || labelRoom <= visibleWidth(cut))
+		return timed;
+	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
+}
+
+// The width the base's whole-second time took: integer seconds below 10, the shared format above.
+function legacyTimeWidth(card: Card) {
+	const seconds = Math.floor(Math.max(0, card.elapsedMs ?? 0) / 1000);
+	return seconds < 10
+		? `${seconds}s`.length
+		: visibleWidth(formatDuration(seconds * 1000));
 }
 
 export function clean(text: string) {
