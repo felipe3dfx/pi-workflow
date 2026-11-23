@@ -671,8 +671,8 @@ function transcriptViewport(mode: unknown): Viewport {
 
 type Layout = {
 	currentScrollTop: number;
-	followingEnd: boolean;
-	followSuppressedAtEnd: boolean;
+	readonly isFollowingEnd: boolean;
+	scrollTo(top: number, options: { disableFollow: true }): void;
 	updateLayout(content: number, viewport: number, render?: () => void): void;
 };
 
@@ -692,7 +692,7 @@ function holdAnchor(scroll: Layout) {
 		const crossed = narrow !== narrowScreen();
 		narrow = narrowScreen();
 		if (held?.shown !== this.currentScrollTop) held = undefined;
-		if (this.followingEnd || (!crossed && !held)) {
+		if (this.isFollowingEnd || (!crossed && !held)) {
 			held = undefined;
 			return layout.call(this, content, viewport, render);
 		}
@@ -703,10 +703,8 @@ function holdAnchor(scroll: Layout) {
 			this.currentScrollTop < top
 				? { top, shown: this.currentScrollTop }
 				: undefined;
-		if (this.followingEnd) {
-			this.followingEnd = false;
-			this.followSuppressedAtEnd = true;
-		}
+		if (this.isFollowingEnd)
+			this.scrollTo(this.currentScrollTop, { disableFollow: true });
 	};
 }
 
@@ -824,19 +822,21 @@ class BashPart implements Component {
 		this.pad = pad;
 	}
 
-	lane(width: number) {
-		return this.header ? 0 : Math.min(2, Math.max(0, width - 1));
+	geometry(width: number) {
+		const lane = this.header ? 0 : Math.min(2, Math.max(0, width - 1));
+		const room = width - lane;
+		return { lane, room, padded: room + 2 * this.pad };
 	}
 
 	render(width: number) {
-		const lane = " ".repeat(this.lane(width));
-		const room = width - lane.length;
+		const { lane, room, padded } = this.geometry(width);
+		const indent = " ".repeat(lane);
 		const pad = " ".repeat(this.pad);
 		return this.host
-			.render(room + 2 * this.pad)
+			.render(padded)
 			.map(
 				(line) =>
-					lane +
+					indent +
 					truncateToWidth(
 						line.startsWith(pad) ? line.slice(this.pad) : line,
 						room,
@@ -846,15 +846,10 @@ class BashPart implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent) {
-		const lane = this.lane(event.width);
-		const room = event.width - lane;
+		const { lane, room, padded } = this.geometry(event.width);
 		const x = event.x - lane;
 		if (x < 0 || x >= room) return undefined;
-		return this.host.handleMouse({
-			...event,
-			x: x + this.pad,
-			width: room + 2 * this.pad,
-		});
+		return this.host.handleMouse({ ...event, x: x + this.pad, width: padded });
 	}
 
 	invalidate() {
@@ -897,14 +892,13 @@ function inLane<T>(row: BashRow, run: () => T) {
 }
 
 function wrapRowRender(original: PatchMethod) {
+	const render = original as (this: unknown, width: number) => string[];
 	return function (this: unknown, outer: number) {
 		const { left, width } = blockMargin(assistantInset, outer);
-		const render = (original as (width: number) => readonly string[]).bind(
-			this,
-		);
 		const bash = narrowBash(this);
-		if (bash) return width === 0 ? [] : inLane(bash, () => render(width));
-		const lines = render(width);
+		if (bash)
+			return width === 0 ? [] : inLane(bash, () => render.call(this, width));
+		const lines = render.call(this, width);
 		if (left === 0) return lines;
 		const margin = " ".repeat(left);
 		return lines.map((line) =>
@@ -916,15 +910,16 @@ function wrapRowRender(original: PatchMethod) {
 }
 
 function wrapRowMouse(original: PatchMethod) {
+	const mouse = original as (this: unknown, event: Pointer) => unknown;
 	return function (this: unknown, event: Pointer) {
 		const margin = blockMargin(assistantInset, event.width);
 		const inner =
 			margin.left === 0 && margin.right === 0 ? event : margin.mouse(event);
 		if (!inner) return undefined;
-		const dispatch = () =>
-			(original as (event: Pointer) => unknown).call(this, inner);
 		const bash = narrowBash(this);
-		return bash ? inLane(bash, dispatch) : dispatch();
+		return bash
+			? inLane(bash, () => mouse.call(this, inner))
+			: mouse.call(this, inner);
 	} as PatchMethod;
 }
 

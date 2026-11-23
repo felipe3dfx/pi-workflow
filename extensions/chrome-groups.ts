@@ -576,16 +576,16 @@ function rows(
 	}));
 }
 
-function cursorLine(container: Container) {
+function cursorAt(container: Container) {
 	const cursor = cursors.get(container);
 	const view = views.get(container);
-	if (!cursor || !view) return undefined;
-	return view.heads.find(
+	if (!cursor || !view) return -1;
+	return view.heads.findIndex(
 		(head) =>
 			head.component === cursor.component &&
 			head.ordinal === cursor.ordinal &&
 			head.kind === cursor.kind,
-	)?.row;
+	);
 }
 
 function selected(line: string, width: number) {
@@ -602,8 +602,7 @@ export const transcriptCursor = {
 	move(delta: -1 | 1) {
 		const view = current && views.get(current);
 		if (!current || !view || view.heads.length === 0) return false;
-		const line = cursorLine(current);
-		const at = view.heads.findIndex((head) => head.row === line);
+		const at = cursorAt(current);
 		const next =
 			at < 0
 				? view.heads.length - 1
@@ -617,8 +616,9 @@ export const transcriptCursor = {
 	},
 	toggle() {
 		const view = current && views.get(current);
-		const line = current && cursorLine(current);
-		if (!view || line === undefined) return false;
+		if (!current || !view) return false;
+		const line = view.heads[cursorAt(current)]?.row;
+		if (line === undefined) return false;
 		const result = view.targets[line]?.component.handleMouse?.({
 			type: "click",
 			button: "left",
@@ -677,15 +677,16 @@ export function patchChat(
 				lines: chat.lines,
 			};
 			current = container;
+			const heads = [...chat.heads.values()];
 			views.set(container, {
 				width,
 				margin,
-				heads: [...chat.heads.values()],
+				heads,
 				targets,
 				total: chat.lines.length,
 			});
 			const point = hovered.get(container);
-			const cursor = cursorLine(container);
+			const cursor = heads[cursorAt(container)]?.row;
 			const paint = narrowScreen() ? margin.left + margin.width : width;
 			return chat.lines.map((line, i) => {
 				if (i === cursor) return selected(pointAt(line), paint);
