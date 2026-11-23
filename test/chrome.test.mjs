@@ -294,8 +294,13 @@ test("a child's elapsed time reads the same as any other duration of the same le
 	assert.equal(childElapsed({ createdAt: 5_000 }, 4_000), "0.0s");
 });
 
-test("the status row reads the same durations at narrow and wide widths", () => {
-	for (const width of [44, 100]) {
+test("the status row reads the same durations on narrow and wide terminals", (t) => {
+	const terminal = densityTerminal(t, 44);
+	for (const [columns, width] of [
+		[44, 43],
+		[100, 100],
+	]) {
+		terminal.columns = columns;
 		const [line] = plain(
 			renderStatusRow(
 				theme,
@@ -303,10 +308,8 @@ test("the status row reads the same durations at narrow and wide widths", () => 
 				width,
 			),
 		);
-		assert.match(
-			line,
-			width < 60 ? /Working +1m 05s$/ : /Working 3\.2s +1m 05s$/,
-		);
+		if (columns < 60) assert.match(line, /^⠋ Working {27}1m 05s$/);
+		else assert.match(line, /Working 3\.2s +1m 05s$/);
 	}
 });
 

@@ -1201,7 +1201,7 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
 	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
-	assert.match(lines[head], /^◇ Advisor {2}\S+ · claude-opus-5 \(high\)$/);
+	assert.match(lines[head], /^◇ Advisor {2}9\.0s · claude-opus-5 \(high\)$/);
 	assert.equal(lines[head + 1], "  Sound.");
 	const open = card.expanded;
 	assert.equal(mouse(mode.chatContainer, 43, "click", head, 42), undefined);
