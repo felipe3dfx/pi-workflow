@@ -1132,6 +1132,46 @@ test("below 60 terminal columns native Bash keeps its streaming, preview, expans
 	assert.ok(expanded.includes("  step 1"));
 });
 
+test("below 60 terminal columns a wrapping native Bash command starts after its glyph and its wrapped output rows start after the lane, all inside the right margin", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const words = Array.from({ length: 12 }, (_, i) => `word${i}`).join(" ");
+	const bash = new BashExecutionComponent(`echo ${words}`, {
+		requestRender() {},
+	});
+	bash.appendOutput(words);
+	bash.setComplete(0, false);
+	for (const expanded of [false, true]) {
+		bash.setExpanded(expanded);
+		const lines = plain(bash.render(43));
+		const command = lines.findIndex((line) => line.startsWith("$ "));
+		assert.match(lines[command], /^\$ echo word0 /, lines.join("\n"));
+		const first = lines.findIndex((line) => /^ {2}word0 /.test(line));
+		const body = lines.slice(first, -1).map((line) => line.trimEnd());
+		assert.ok(first > command && body.length >= 2, lines.join("\n"));
+		for (const line of body) assert.match(line, /^ {2}word\d+/, `${expanded}`);
+		assert.equal(body.map((line) => line.trim()).join(" "), words);
+		for (const line of lines) assert.ok(visibleWidth(line) <= 42, line);
+	}
+});
+
+test("below 60 terminal columns native Bash shrinks its lane to keep one output cell and fits every row in the 2 or 3 columns it is given", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const bash = new BashExecutionComponent("ls", { requestRender() {} });
+	bash.appendOutput("t");
+	bash.setComplete(0, false);
+	for (const [outer, row] of [
+		[3, " t"],
+		[2, "t"],
+	]) {
+		const lines = plain(bash.render(outer));
+		assert.ok(lines.includes(row), `${outer}: ${JSON.stringify(lines)}`);
+		for (const line of lines)
+			assert.ok(visibleWidth(line) <= outer - 1, `${outer}: ${line}`);
+	}
+});
+
 test("only the terminal's columns decide the density, whatever width the component is given", (t) => {
 	patched(t);
 	const component = assistantComponent(true);
@@ -1151,37 +1191,75 @@ test("only the terminal's columns decide the density, whatever width the compone
 	assert.deepEqual(plain(component.render(43)), today[43]);
 });
 
-test("row mouse events below 60 terminal columns reach the content cell under the pointer and the right margin reaches nothing, for tool rows and native Bash", (t) => {
+test("row mouse events below 60 terminal columns reach the content cell under the pointer and the right margin reaches nothing, for tool rows", (t) => {
 	const seen = [];
-	const spy = (event) => {
+	ToolExecutionComponent.prototype.handleMouse = (event) => {
 		seen.push(event);
 	};
-	ToolExecutionComponent.prototype.handleMouse = spy;
-	BashExecutionComponent.prototype.handleMouse = spy;
 	t.after(() => {
 		restoreMessages();
 		ToolExecutionComponent.prototype.handleMouse = pristine.toolMouse;
-		delete BashExecutionComponent.prototype.handleMouse;
 	});
 	patchMessages();
 	densityTerminal(t, 44);
-	const bash = new BashExecutionComponent("ls", { requestRender() {} });
-	bash.setComplete(0, false);
 	const at = (x) => ({ x, y: 2, width: 43, height: 4, screenX: x, screenY: 2 });
-	for (const row of [toolRow(), bash]) {
-		seen.length = 0;
-		row.handleMouse(at(42));
-		assert.equal(seen.length, 0);
-		row.handleMouse(at(0));
-		row.handleMouse(at(41));
-		assert.deepEqual(
-			seen.map(({ x, width }) => [x, width]),
-			[
-				[0, 42],
-				[41, 42],
-			],
-		);
-	}
+	const row = toolRow();
+	row.handleMouse(at(42));
+	assert.equal(seen.length, 0);
+	row.handleMouse(at(0));
+	row.handleMouse(at(41));
+	assert.deepEqual(
+		seen.map(({ x, width }) => [x, width]),
+		[
+			[0, 42],
+			[41, 42],
+		],
+	);
+});
+
+test("a click on native Bash output below 60 terminal columns reaches the output cell it renders, and the lane, the right margin and the border reach nothing", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const bash = new BashExecutionComponent(
+		"echo a command long enough to wrap the row",
+		{ requestRender() {} },
+	);
+	bash.appendOutput("target output");
+	bash.setComplete(0, false);
+	bash.setExpanded(true);
+	const output = bash.contentContainer.children[1];
+	const seen = [];
+	output.handleMouse = (event) => {
+		seen.push(event);
+		return { handled: true };
+	};
+	const lines = plain(bash.render(43));
+	const row = lines.findIndex((line) => line.trimEnd() === "  target output");
+	assert.ok(row > 0, lines.join("\n"));
+	const click = (x, y = row) =>
+		bash.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			width: 43,
+			height: lines.length,
+			screenX: x,
+			screenY: y,
+		});
+	assert.equal(click(1), undefined);
+	assert.equal(click(42), undefined);
+	assert.equal(click(2, lines.length - 1), undefined);
+	assert.equal(seen.length, 0);
+	assert.ok(click(2)?.handled);
+	assert.ok(click(41)?.handled);
+	assert.deepEqual(
+		seen.map(({ x, y, width }) => [x, y, width]),
+		[
+			[1, 1, 42],
+			[40, 1, 42],
+		],
+	);
 });
 
 test("a click on an open thought's body below 60 terminal columns reaches the text cell under it across the full unstamped width, and the rail and right margin reach nothing", (t) => {

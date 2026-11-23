@@ -804,43 +804,107 @@ function wrapRenderToken(original: PatchMethod) {
 }
 
 type BashRow = {
-	children: Component[];
 	contentContainer: Container;
 	outputPad: number;
 };
 
-function narrowBash(row: BashRow, width: number) {
-	const body = Math.max(1, width - 2);
-	return row.children.flatMap((child) => {
-		if (child !== row.contentContainer) return child.render(width);
-		return row.contentContainer.children.flatMap((part, i) => {
-			const pad = (part as { paddingX?: number }).paddingX ?? row.outputPad;
-			const room = i === 0 ? width : body;
-			return part.render(room + 2 * pad).map((line) => {
-				const fitted = truncateToWidth(
-					line.startsWith(" ".repeat(pad)) ? line.slice(pad) : line,
-					room,
-					"",
-				);
-				return i === 0 ? fitted : lane() + fitted;
-			});
+// One part of a native Bash row without its padding: the command header keeps
+// column 0 for its `$ ` glyph, the other parts sit after a lane that shrinks to
+// leave them one cell. Rendering and clicks share this geometry.
+class BashPart implements Component {
+	host = new Container();
+	part: Component;
+	header: boolean;
+	pad: number;
+
+	constructor(part: Component, header: boolean, pad: number) {
+		this.part = part;
+		this.host.addChild(part);
+		this.header = header;
+		this.pad = pad;
+	}
+
+	lane(width: number) {
+		return this.header ? 0 : Math.min(2, Math.max(0, width - 1));
+	}
+
+	render(width: number) {
+		const lane = " ".repeat(this.lane(width));
+		const room = width - lane.length;
+		const pad = " ".repeat(this.pad);
+		return this.host
+			.render(room + 2 * this.pad)
+			.map(
+				(line) =>
+					lane +
+					truncateToWidth(
+						line.startsWith(pad) ? line.slice(this.pad) : line,
+						room,
+						"",
+					),
+			);
+	}
+
+	handleMouse(event: TuiMouseEvent) {
+		const lane = this.lane(event.width);
+		const room = event.width - lane;
+		const x = event.x - lane;
+		if (x < 0 || x >= room) return undefined;
+		return this.host.handleMouse({
+			...event,
+			x: x + this.pad,
+			width: room + 2 * this.pad,
 		});
+	}
+
+	invalidate() {
+		this.part.invalidate?.();
+	}
+}
+
+const bashParts = new WeakMap<Component, BashPart>();
+
+function narrowBash(row: unknown) {
+	if (
+		!narrowScreen() ||
+		!(row instanceof BashExecutionComponent) ||
+		!((row as unknown as BashRow).contentContainer instanceof Container)
+	)
+		return undefined;
+	return row as unknown as BashRow;
+}
+
+// Pi lays out and dispatches the row itself, through its own Container, with
+// the content parts seen through their BashPart for the call.
+function inLane<T>(row: BashRow, run: () => T) {
+	const content = row.contentContainer;
+	const parts = content.children;
+	const shown = parts.map((part, i) => {
+		let shown = bashParts.get(part);
+		if (!shown) {
+			const pad = (part as { paddingX?: number }).paddingX ?? row.outputPad;
+			shown = new BashPart(part, i === 0, pad);
+			bashParts.set(part, shown);
+		}
+		return shown;
 	});
+	content.children = shown;
+	try {
+		return run();
+	} finally {
+		if (content.children === shown) content.children = parts;
+	}
 }
 
 function wrapRowRender(original: PatchMethod) {
 	return function (this: unknown, outer: number) {
 		const { left, width } = blockMargin(assistantInset, outer);
-		if (
-			narrowScreen() &&
-			this instanceof BashExecutionComponent &&
-			(this as unknown as BashRow).contentContainer instanceof Container
-		)
-			return narrowBash(this as unknown as BashRow, width);
-		const lines = (original as (width: number) => readonly string[]).call(
+		const render = (original as (width: number) => readonly string[]).bind(
 			this,
-			width,
 		);
+		const bash = narrowBash(this);
+		if (bash) return inLane(bash, () => render(width));
+		const lines = render(width);
 		if (left === 0) return lines;
 		const margin = " ".repeat(left);
 		return lines.map((line) =>
@@ -857,7 +921,10 @@ function wrapRowMouse(original: PatchMethod) {
 		const inner =
 			margin.left === 0 && margin.right === 0 ? event : margin.mouse(event);
 		if (!inner) return undefined;
-		return (original as (event: Pointer) => unknown).call(this, inner);
+		const dispatch = () =>
+			(original as (event: Pointer) => unknown).call(this, inner);
+		const bash = narrowBash(this);
+		return bash ? inLane(bash, dispatch) : dispatch();
 	} as PatchMethod;
 }
 
