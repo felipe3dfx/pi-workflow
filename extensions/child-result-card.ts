@@ -104,6 +104,14 @@ function header(
 		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
 		rest += ` ${paintTone(theme, card, question, card.state)}`;
+	// Narrow, a collapsed completed card without a Verdict still reads its state (owner, #417).
+	else if (
+		card.state === "completed" &&
+		!card.verdict &&
+		!open &&
+		narrowScreen()
+	)
+		rest += ` ${runStateMark("completed").paint(theme, "completed")}`;
 	if (card.verdict)
 		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
 	const line = `${glyph} ${label("Subagent")} ${rest}`;

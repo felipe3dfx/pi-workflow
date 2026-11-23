@@ -743,7 +743,7 @@ test("below 60 terminal columns every transcript block puts its glyph in the 2-c
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
 		"◆ Run ls",
-		`◆ Subagent worker 1111  1m 02s${" ".repeat(11)}›`,
+		"◆ Subagent worker 1111 completed  1m 02s ›",
 	])
 		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
 	const asked = lines.indexOf("◆ Asked Which rollout?");
