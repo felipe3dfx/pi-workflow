@@ -307,16 +307,21 @@ test("below 60 terminal columns the config guide, model profiles, the Advisor pi
 		assert.equal(lines[3], `│ ${"▸ [x] Child session".padEnd(columns - 4)} │`);
 		await guide.close();
 
-		for (const opened of [
-			await openProfiles(t, screen),
-			openAdvisorPicker(t, screen),
-		]) {
-			lines = await overlay(opened);
-			const row = lines.find((line) => line.includes("▸"));
-			assert.equal(row.length, columns);
-			assert.match(row, /^│ ▸ \S.* │$/);
-			opened.close();
-		}
+		const profiles = await openProfiles(t, screen);
+		lines = await overlay(profiles);
+		assert.match(lines[0], /^┌─ Model profiles ─+ \[×\] ─┐$/);
+		assert.equal(lines[3].length, columns);
+		assert.match(lines[3], /^│ ▸ daily +● active › {2}│$/);
+		profiles.close();
+		assert.ok(profiles.closed);
+
+		const advisor = openAdvisorPicker(t, screen);
+		lines = await overlay(advisor);
+		assert.match(lines[0], /^┌─ Advisor model ─+ \[×\] ─┐$/);
+		assert.equal(lines[4].length, columns);
+		assert.match(lines[4], /^│ ▸ openai-codex\/gpt-5\.6-luna +› {2}│$/);
+		advisor.close();
+		assert.ok(advisor.closed);
 
 		const fleet = openFleet(t, screen);
 		lines = await overlay(fleet);
@@ -396,22 +401,24 @@ test("an open overlay keeps the width and padding it opened with while the termi
 	fullWidth(opening, 44);
 	screen.terminal.columns = 64;
 	const grown = await layout(narrow);
-	assert.deepEqual({ ...grown, settings: [] }, { ...opening, settings: [] });
-	assert.match(grown.settings[0], /^┌─ Settings ─+ \[×\] ─┐$/);
-	assert.match(grown.settings[3], /^│ ▸ Setting 0 +on +│$/);
+	assert.deepEqual(grown, opening);
+	assert.equal(narrow.settings.handleMouse(click(42, 3, 64)), undefined);
+	assert.equal(narrow.settings.handleMouse(click(41, 3, 64))?.handled, true);
+	assert.match(plain(narrow.settings.render(64))[3], /^│ ▸ Setting 0 +off +│$/);
 	await closeAll(narrow);
 
+	screen.terminal.columns = 80;
 	const wide = await openAll();
 	const wideOpening = await layout(wide);
 	assert.deepEqual(widths(wideOpening), {
-		guide: 48,
-		profiles: 44,
-		advisor: 44,
-		fleet: 64,
+		guide: 56,
+		profiles: 56,
+		advisor: 56,
+		fleet: 80,
 	});
 	assert.equal(
 		wideOpening.guide.lines[3],
-		`│  ${"▸ [x] Child session".padEnd(42)}  │`,
+		`│  ${"▸ [x] Child session".padEnd(50)}  │`,
 	);
 	assert.match(wideOpening.fleet.lines[0], /^ ┌─ Fleet/);
 	assert.match(wideOpening.settings[0], /^ ┌─ Settings/);
@@ -422,8 +429,12 @@ test("an open overlay keeps the width and padding it opened with while the termi
 		assert.deepEqual(shrunk[name], wideOpening[name]);
 	assert.match(shrunk.fleet.lines[0], /^ ┌─ Fleet/);
 	assert.match(shrunk.settings[0], /^ ┌─ Settings/);
+	screen.terminal.columns = 90;
+	const regrown = await layout(wide);
+	assert.deepEqual(regrown, wideOpening);
 	await closeAll(wide);
 
+	screen.terminal.columns = 59;
 	fullWidth(await layout(await openAll()), 59);
 });
 
@@ -532,13 +543,10 @@ test("a click below the scrolled rows of narrow settings changes no hidden setti
 	assert.deepEqual(changes, []);
 });
 
-test("in a narrow fullscreen dock with a fixed header and a footer, tall settings keep their hints and bottom border in view", async (t) => {
-	patchMenus();
-	t.after(restoreMenus);
-	const screen = piScreen(t, 44, { rows: 12, theme });
-	const { selector, list } = settingsSelector({
-		description: longDescription,
-	});
+// Pi's fullscreen chat layout on a narrow screen: a fixed header, the
+// transcript, the dock with `widgets` above the editor slot holding `selector`,
+// and a footer.
+function narrowDock(t, screen, selector, widgets = new Container()) {
 	const editor = new Container();
 	editor.addChild(selector);
 	const document = new Container();
@@ -547,7 +555,7 @@ test("in a narrow fullscreen dock with a fixed header and a footer, tall setting
 		document,
 		pendingMessages: new Container(),
 		status: new Container(),
-		widgetsAbove: new Container(),
+		widgetsAbove: widgets,
 		editor,
 		widgetsBelow: new Container(),
 		footer: { render: () => ["FOOTER"], invalidate() {} },
@@ -560,6 +568,59 @@ test("in a narrow fullscreen dock with a fixed header and a footer, tall setting
 	});
 	t.after(() => header.stop());
 	assert.ok(header.active());
+}
+
+const themes = [
+	"dark",
+	"light",
+	"catppuccin",
+	"dracula",
+	"gruvbox",
+	"monokai",
+	"nord",
+	"one-dark",
+	"solarized",
+	"tokyo-night",
+	"everforest",
+	"rose-pine",
+];
+
+// Pi's own Settings, with its Theme submenu offering `themes`.
+function piSettings(previews) {
+	const callbacks = new Proxy(
+		{},
+		{
+			get: (_, name) =>
+				name === "onThemePreview" ? (value) => previews.push(value) : () => {},
+		},
+	);
+	return new SettingsSelectorComponent(
+		{
+			autoCompact: true,
+			steeringMode: "all",
+			followUpMode: "all",
+			transport: "sse",
+			thinkingLevel: "off",
+			currentTheme: "dark",
+			terminalTheme: "dark",
+			availableThemes: themes,
+			warnings: {},
+			modelThinkingLevels: {},
+			availableDefaultModels: [],
+			fullscreenWheelScrollLines: "auto",
+		},
+		callbacks,
+	);
+}
+
+test("in a narrow fullscreen dock with a fixed header and a footer, tall settings keep their hints and bottom border in view", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const screen = piScreen(t, 44, { rows: 12, theme });
+	const { selector, list } = settingsSelector({
+		description: longDescription,
+	});
+	narrowDock(t, screen, selector);
 
 	for (const selected of [0, 5]) {
 		for (let i = 0; i < selected; i++) list.handleInput("\x1b[B");
@@ -576,6 +637,87 @@ test("in a narrow fullscreen dock with a fixed header and a footer, tall setting
 			lines.some((line) => line.startsWith(`│ ▸ Setting ${selected} `)),
 			lines.join("\n"),
 		);
+	}
+});
+
+test("in a narrow fullscreen dock, the Settings Theme submenu keeps the theme chosen with the keyboard and its hint in view", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const screen = piScreen(t, 44, { rows: 12, theme });
+	const previews = [];
+	const selector = piSettings(previews);
+	narrowDock(t, screen, selector);
+	const list = selector.getSettingsList();
+	for (const character of "theme") list.handleInput(character);
+	list.handleInput("\r");
+	for (let i = 0; i < 6; i++) list.handleInput("\x1b[B");
+	assert.equal(previews.at(-1), "nord");
+
+	const lines = await screen.frame();
+	assert.equal(lines.length, 12);
+	assert.match(lines[2], /^┌─ Settings › Theme ─+ \[×\] ─┐$/);
+	assert.deepEqual(lines.slice(9, 12), [
+		`│ ${"  Enter select  |  Esc go back".padEnd(40)} │`,
+		`└${"─".repeat(42)}┘`,
+		"FOOTER",
+	]);
+	const row = lines.findIndex((line) => line.startsWith("│  ○ nord "));
+	assert.ok(row > 2 && row < 9, lines.join("\n"));
+	const painted = screen.tui.getScreenLines()[row];
+	assert.ok(
+		painted.includes(theme.bg("selectedBg", "\0").split("\0")[0]),
+		JSON.stringify(painted),
+	);
+});
+
+const running = (count) =>
+	Array.from({ length: count }, (_, i) => childRecord(`${2000 + i}`));
+
+function widgets(children, tasks) {
+	const above = new Container();
+	above.addChild({
+		render: (width) => [
+			...renderChildrenBox(theme, running(children), clock, width),
+			...renderTodoBox(
+				theme,
+				todoTasks(tasks),
+				todoState,
+				width,
+				new Map(),
+				12,
+				1,
+			).lines,
+		],
+		invalidate() {},
+	});
+	return above;
+}
+
+test("in a narrow fullscreen dock crowded by running children and a Todo, tall settings keep their frame, selected row and hints in view while Pi shrinks the widgets", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	freezeClock(t);
+	for (const children of [3, 4]) {
+		const screen = piScreen(t, 44, { rows: 12, theme });
+		const { selector, list } = settingsSelector({
+			description: longDescription,
+		});
+		narrowDock(t, screen, selector, widgets(children, 1));
+		for (const selected of [0, 5]) {
+			for (let i = 0; i < selected; i++) list.handleInput("\x1b[B");
+			const lines = await screen.frame();
+			const top = lines.findIndex((line) => /^┌─ Settings /.test(line));
+			assert.ok(top > 0, lines.join("\n"));
+			const bottom = lines.indexOf(`└${"─".repeat(42)}┘`, top);
+			assert.ok(bottom > top, lines.join("\n"));
+			assert.deepEqual(lines.slice(bottom - 2, bottom), settingsHints);
+			assert.ok(
+				lines
+					.slice(top + 1, bottom - 2)
+					.some((line) => line.startsWith(`│ ▸ Setting ${selected} `)),
+				lines.join("\n"),
+			);
+		}
 	}
 });
 
