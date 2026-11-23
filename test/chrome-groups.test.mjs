@@ -15,7 +15,8 @@ import {
 	Markdown,
 	ScrollView,
 	setCapabilityOverrides,
-	TuiMainScreen,
+	TuiAltScreen,
+	VStack,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
@@ -989,11 +990,14 @@ test("crossing 60 terminal columns keeps the selection on a thinking block that 
 	}
 });
 
-test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection, keyboard focus and a manual scroll position", (t) => {
+test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection, keyboard focus and a manual scroll position", async (t) => {
 	const { mode, say, tool, render } = chat(t);
 	t.after(() => transcriptCursor.leave());
 	const terminal = densityTerminal(t, 44);
-	const scroll = new ScrollView(mode.chatContainer, { follow: "end" });
+	const scroll = new ScrollView(mode.chatContainer, {
+		follow: "end",
+		primary: true,
+	});
 	mode.transcriptScrollView = scroll;
 	say([thought(), said("Looking.")], "stop");
 	for (let i = 0; i < 6; i++)
@@ -1009,34 +1013,35 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	tool("grep", { pattern: "TODO" }, { text: "hit" });
 	const command = tool("bash", { command: "ls" }, { text: "one" });
 	const last = tool("bash", { command: "pwd" }, { text: "/" });
-	const frame = () => {
-		const lines = scroll.render(43);
-		scroll.updateLayout(lines.length, 8, () => {});
+	const { tui, editor, press, resize } = await fullscreen(t, terminal, scroll);
+	const container = mode.chatContainer;
+	const thinking = render(44).indexOf("◆ Thought");
+	assert.ok(mouse(container, 44, "click", thinking)?.handled);
+	const header = render(44).indexOf("◈ Read 1 file, Searched 1 pattern");
+	assert.ok(mouse(container, 44, "click", header)?.handled);
+	command.setExpanded(true);
+	const frame = async (columns) => {
+		await resize(columns);
+		const lines = tui.getScreenLines();
+		const shown = lines.map((line) => stripVTControlCharacters(line));
+		assert.ok(shown.some((line) => line.includes("What should we build")));
+		assert.equal(tui.getFocusedComponent(), editor);
 		return lines;
 	};
-	const { tui, editor, press } = focusedEditor(t, terminal);
-	const container = mode.chatContainer;
-	const thinking = render(43).indexOf("◆ Thought");
-	assert.ok(mouse(container, 43, "click", thinking)?.handled);
-	const header = render(43).indexOf("◈ Read 1 file, Searched 1 pattern");
-	assert.ok(mouse(container, 43, "click", header)?.handled);
-	command.setExpanded(true);
-	terminal.columns = 60;
-	frame();
+	await frame(60);
 	assert.ok(transcriptCursor.move(-1));
 	scroll.scrollBy(-3);
 	const top = scroll.scrollTop;
 	assert.ok(top > 0 && !scroll.isFollowingEnd);
-	terminal.columns = 44;
-	const narrow = frame();
-	assert.ok(narrow.length - 8 < top, "the narrow layout clamps the anchor");
-	assert.equal(scroll.scrollTop, narrow.length - 8);
+	const narrow = await frame(44);
+	assert.ok(Math.max(...narrow.map(visibleWidth)) <= 44);
+	assert.equal(scroll.scrollTop, top);
 	assert.equal(scroll.isFollowingEnd, false);
 	press("\r");
 	assert.equal(tui.getFocusedComponent(), editor);
 	assert.equal(last.expanded, true);
-	terminal.columns = 60;
-	const wide = frame().map((line) => stripVTControlCharacters(line).trimEnd());
+	assert.ok(Math.max(...(await frame(60)).map(visibleWidth)) > 44);
+	const wide = render(60).map((line) => line.trimEnd());
 	assert.ok(wide.includes("   ┃ ◆ Thought"));
 	assert.ok(wide.includes("   ◆ Read a.ts"));
 	assert.ok(wide.includes("   ┃ $ ls"));
@@ -1045,23 +1050,33 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	press(" ");
 	assert.equal(tui.getFocusedComponent(), editor);
 	assert.equal(last.expanded, false);
-	terminal.columns = 44;
-	assert.deepEqual(frame(), narrow);
+	assert.deepEqual(await frame(44), narrow);
 	assert.equal(command.expanded, true);
 	assert.equal(transcriptCursor.active(), true);
 });
 
-// A Chrome editor focused in Pi's TUI, whose terminal reads the density
-// terminal's columns; `press` sends a key through the terminal input path.
-function focusedEditor(t, density) {
+// The transcript viewport above a focused Chrome editor in Pi's fullscreen
+// TUI, whose terminal reads the density terminal's columns. `press` sends a
+// key through the terminal input path; `resize` sets the columns, fires the
+// terminal's resize and resolves once that frame is written.
+async function fullscreen(t, density, scroll) {
 	let input;
+	let resized;
+	let written;
+	const frame = () =>
+		new Promise((resolve) => {
+			written = resolve;
+		});
 	const terminal = {
-		start(onInput) {
+		start(onInput, onResize) {
 			input = onInput;
+			resized = onResize;
 		},
 		stop() {},
 		async drainInput() {},
-		write() {},
+		write(data) {
+			if (data.startsWith("\x1b[?2026h")) written?.();
+		},
 		get columns() {
 			return density.columns;
 		},
@@ -1076,7 +1091,7 @@ function focusedEditor(t, density) {
 		setTitle() {},
 		setProgress() {},
 	};
-	const tui = new TuiMainScreen(terminal);
+	const tui = new TuiAltScreen(terminal);
 	const editor = createChromeEditor(
 		tui,
 		{ borderColor: (text) => text, selectList: {} },
@@ -1086,11 +1101,25 @@ function focusedEditor(t, density) {
 			label: () => "m",
 		},
 	);
+	tui.addChild(scroll);
 	tui.addChild(editor);
+	tui.setLayoutRoot(new VStack([{ component: scroll, grow: 1 }, editor]));
 	tui.setFocus(editor);
+	const first = frame();
 	tui.start();
 	t.after(() => tui.stop());
-	return { tui, editor, press: (key) => input(key) };
+	await first;
+	return {
+		tui,
+		editor,
+		press: (key) => input(key),
+		resize(columns) {
+			const shown = frame();
+			density.columns = columns;
+			resized();
+			return shown;
+		},
+	};
 }
 
 function scrollStates(scroll, contents) {
