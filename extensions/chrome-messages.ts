@@ -21,6 +21,7 @@ import {
 	MouseRegion,
 	Spacer,
 	sliceByColumn,
+	stripTerminalSequences,
 	Text,
 	truncateToWidth,
 	visibleWidth,
@@ -162,6 +163,7 @@ class Framed implements Component {
 	edge: number;
 	narrowRight: number;
 	placement?: Placement;
+	stampGroup?: Framed[];
 
 	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
@@ -204,11 +206,25 @@ class Framed implements Component {
 		if (frame.reserved && lines.length > 0) {
 			const pad = Math.max(0, offset + inner - visibleWidth(lines[0]));
 			lines[0] += `${" ".repeat(pad + stampGap)}${tail}`;
-		} else if (frame.narrow && fits && stamp && lines.length > 0) {
+		} else if (frame.narrow && fits && stamp && this.carriesStamp(width)) {
 			const x = width - visibleWidth(tail);
 			if (x >= 0) this.placement = placeFloatingStamp(lines, tail, x, width);
 		}
 		return lines.map((line) => truncateToWidth(line, width));
+	}
+
+	// Below 60 columns a group shows one stamp, on its last block that renders
+	// text at this width, which its source alone cannot tell.
+	carriesStamp(width: number) {
+		const group = this.stampGroup ?? [this];
+		return (
+			group.findLast((block) => block === this || block.showsText(width)) ===
+			this
+		);
+	}
+
+	showsText(width: number) {
+		return this.child.render(this.geometry(width).inner).some(visibleRow);
 	}
 
 	handleMouse(event: TuiMouseEvent) {
@@ -237,18 +253,25 @@ class Framed implements Component {
 	}
 }
 
+function visibleRow(line: string) {
+	return stripTerminalSequences(line).trim() !== "";
+}
+
 function placeFloatingStamp(
 	lines: string[],
 	tail: string,
 	x: number,
 	width: number,
-): Placement {
-	const text = lines[lines.length - 1].trimEnd();
+): Placement | undefined {
+	const last = lines.findLastIndex(visibleRow);
+	if (last < 0) return undefined;
+	const text = lines[last].trimEnd();
 	const used = visibleWidth(text);
 	const ownRow = used + stampGap > x;
-	if (ownRow) lines.push(`${" ".repeat(x)}${tail}`);
-	else lines[lines.length - 1] = `${text}${" ".repeat(x - used)}${tail}`;
-	return { width, row: lines.length - 1, x, ownRow };
+	const row = ownRow ? last + 1 : last;
+	if (ownRow) lines.splice(row, 0, `${" ".repeat(x)}${tail}`);
+	else lines[row] = `${text}${" ".repeat(x - used)}${tail}`;
+	return { width, row, x, ownRow };
 }
 
 function clock(timestamp: number | undefined) {
@@ -484,13 +507,10 @@ function updateContent(
 		this.contentContainer.addChild(new Spacer(1));
 	}
 	let thinkingRunIndex = 0;
-	const lastText = message.content.findLastIndex(
-		(content) => content.type === "text" && content.text.trim(),
-	);
+	const texts: Framed[] = [];
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
-			const stamped = i === lastText;
 			const markdown = new Markdown(
 				content.text.trim(),
 				0,
@@ -501,18 +521,19 @@ function updateContent(
 					transform: markdownTransform("assistant", this),
 				},
 			);
-			this.contentContainer.addChild(
-				new Framed(
-					markdown,
-					() => ({
-						first: lane(),
-						rest: lane(),
-						stamp: stamped || !narrowScreen() ? stamp(message.timestamp) : "",
-					}),
-					inset,
-					blockRight,
-				),
+			const block = new Framed(
+				markdown,
+				() => ({
+					first: lane(),
+					rest: lane(),
+					stamp: stamp(message.timestamp),
+				}),
+				inset,
+				blockRight,
 			);
+			block.stampGroup = texts;
+			texts.push(block);
+			this.contentContainer.addChild(block);
 		} else if (content.type === "thinking") {
 			const thinkingBlocks: string[] = [];
 			for (; i < message.content.length; i++) {

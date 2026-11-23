@@ -1429,6 +1429,12 @@ test("below 60 terminal columns a streaming assistant message places its stamp a
 		[last],
 	);
 	assert.equal(parts.at(-1), last);
+	const first = `  First paragraph.${" ".repeat(16)}11:55 AM`;
+	const stamped = (lines) => lines.filter((line) => line.includes("11:55 AM"));
+	assert.deepEqual(stamped(stream("First paragraph.", "<!-- draft -->")), [
+		first,
+	]);
+	assert.deepEqual(stamped(plain(component.render(43))), [first]);
 	assert.deepEqual(stream("Review the narrow layout please"), [
 		"  Review the narrow layout please".padEnd(42),
 		`${" ".repeat(34)}11:55 AM`,
