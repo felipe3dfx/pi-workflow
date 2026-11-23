@@ -30,7 +30,12 @@ import {
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { affordance, narrowScreen, spread } from "./visual-language.ts";
+import {
+	affordance,
+	narrowScreen,
+	pinRight,
+	spread,
+} from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -176,9 +181,11 @@ export function frame(
 	const pad = " ".repeat(indent);
 	const lines = [
 		margin +
-			(placed
-				? spread(top, tail, width, ellipsis)
-				: truncateToWidth(top, width, ellipsis)),
+			(pinned && tail
+				? pinRight(top, tail, width)
+				: placed
+					? spread(top, tail, width)
+					: truncateToWidth(top, width, ellipsis)),
 		...content(inner, placed ? "" : tail).map(
 			(line) => margin + pad + truncateToWidth(line, inner, ellipsis),
 		),

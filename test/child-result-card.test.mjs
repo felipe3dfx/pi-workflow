@@ -675,6 +675,11 @@ test("below 60 terminal columns a result head too long for its row is cut with �
 	for (const width of [1, 2, 3, 5])
 		for (const line of component.render(width))
 			assert.ok(visibleWidth(line) <= width - 1, `${width}: ${line}`);
+	for (const width of [2, 3, 5]) {
+		const head = plain(component, width)[1];
+		assert.equal(head.at(-1), "›", `${width}: ${head}`);
+		assert.equal(visibleWidth(head), width - 1, `${width}: ${head}`);
+	}
 });
 
 test("below 60 terminal columns an open result card cuts its long head with … instead of ...", (t) => {

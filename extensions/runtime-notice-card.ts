@@ -14,7 +14,12 @@ import {
 import { markToggle } from "./chrome-groups.ts";
 import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import { terminalSafeBlock } from "./terminal-safe-text.ts";
-import { affordance, narrowScreen, spread } from "./visual-language.ts";
+import {
+	affordance,
+	narrowScreen,
+	pinRight,
+	spread,
+} from "./visual-language.ts";
 
 export type NoticeMessage = { content: unknown; details?: unknown };
 
@@ -121,18 +126,20 @@ export class RuntimeNoticeCard implements Component {
 	narrow(outer: number) {
 		const t = this.theme;
 		const { width } = blockMargin(assistantInset, outer);
-		const inner = Math.max(1, width - lane.length);
+		if (width < 1) return [""];
+		// The lane gives way to the text so the action always has a cell.
+		const pad = lane.slice(0, width - 1);
+		const inner = width - pad.length;
 		const { action, status } = this.parts;
 		const mark = affordance(t);
 		const lines = [
-			spread(this.narrowHead(width - visibleWidth(mark) - 1), mark, width, "…"),
+			pinRight(this.narrowHead(width - visibleWidth(mark) - 1), mark, width),
 			...wrapTextWithAnsi(t.fg("warning", `→ ${action}`), inner).map(
-				(line) => lane + line,
+				(line) => pad + line,
 			),
 		];
-		if (status)
-			lines.push(lane + truncateToWidth(paint(t, status), inner, "…"));
-		for (const line of this.body(inner)) lines.push(lane + line);
+		if (status) lines.push(pad + truncateToWidth(paint(t, status), inner, "…"));
+		for (const line of this.body(inner)) lines.push(pad + line);
 		return lines.map((line) => truncateToWidth(line, width, "…"));
 	}
 

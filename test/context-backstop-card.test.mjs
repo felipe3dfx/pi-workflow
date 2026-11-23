@@ -167,9 +167,26 @@ test("below 60 terminal columns a backstop narrower than its row cuts the head w
 		"  bounded unit",
 		"  advisor ✓ 3 turns ago",
 	]);
-	for (const width of [1, 2, 3, 5])
-		for (const line of card(t, facts).render(width))
+});
+
+test("below 60 terminal columns a backstop with any usable cell keeps › on the head's last cell and the whole action across its rows, and one with none paints nothing", (t) => {
+	densityTerminal(t, 44);
+	for (const width of [2, 3, 4, 5]) {
+		const raw = card(t, facts).render(width);
+		for (const line of raw)
 			assert.ok(piTui.visibleWidth(line) <= width - 1, `${width}: ${line}`);
+		const [, head, ...action] = raw.map((line) =>
+			stripVTControlCharacters(line),
+		);
+		assert.equal(head.trimEnd().at(-1), "›", `${width}: ${head}`);
+		assert.equal(piTui.visibleWidth(head.trimEnd()), width - 1, `${width}`);
+		assert.equal(
+			action.join("").replaceAll(" ", ""),
+			"→delegatethenextboundedunit",
+			`${width}: ${action.join("|")}`,
+		);
+	}
+	for (const line of card(t, facts).render(1)) assert.equal(line, "");
 });
 
 test("below 60 terminal columns an expanded backstop keeps ›, the action and the advisor row above the full text", (t) => {
