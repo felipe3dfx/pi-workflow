@@ -15,10 +15,16 @@ import {
 	createAskUserChoiceTool,
 	createAskUserQuestionTool,
 } from "../extensions/ask-user-panel.ts";
-import { createFooterHints } from "../extensions/chrome.ts";
+import {
+	createFooterHints,
+	footerHints,
+	renderFooter,
+} from "../extensions/chrome.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { sgrTheme, wideInput } from "./support/wide-input.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -1887,6 +1893,177 @@ test("options are never hidden without a more row, even when that exceeds the ha
 		assert.deepEqual(shown, expected);
 		send("X");
 		await pending;
+	}
+});
+
+const rollout = {
+	question: "Which rollout should we use?",
+	options: [
+		{
+			label: "Gradual rollout",
+			description: "Start with a small test group and monitor results.",
+		},
+		{
+			label: "Full rollout",
+			description: "Make the change available to everyone immediately.",
+		},
+		{ label: "Wait" },
+	],
+};
+const footerKeys = {
+	"app.thinking.cycle": "shift+tab",
+	"app.model.cycleForward": "ctrl+p",
+	"app.tools.expand": "ctrl+o",
+	"app.clear": "ctrl+c",
+};
+const footerRow = (hints, width) =>
+	renderFooter(
+		fakeTheme,
+		footerHints(false, hints.get(), (binding) => footerKeys[binding] ?? ""),
+		width,
+	).map((line) => stripTerminalSequences(line));
+const boxed = (rows, inner) => [
+	`╭${"─".repeat(inner + 2)}╮`,
+	...rows.map((row) => `│ ${row.padEnd(inner)} │`),
+	`╰${"─".repeat(inner - 9)} question ─╯`,
+];
+
+test("below 60 terminal columns each description sits below its label, the cursor is ▸, and the hints show inside the panel instead of the footer", async (t) => {
+	densityTerminal(t, 44);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(hints);
+	const { ctx, send, renderRaw } = tuiContext(40);
+	assert.deepEqual(footerRow(hints, 44), ["Ctrl+O expand · Ctrl+P model"]);
+	const pending = tool.execute(
+		"call-narrow-look",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(44).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"Which rollout should we use?",
+				"",
+				"▸ 1  Gradual rollout",
+				"     Start with a small test group and",
+				"     monitor results.",
+				"  2  Full rollout",
+				"     Make the change available to every…",
+				"  3  Wait",
+				"",
+				"  z  Type your answer",
+				"",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			40,
+		),
+	);
+	assert.deepEqual(footerRow(hints, 44), [""]);
+	send("X");
+	await pending;
+	assert.deepEqual(footerRow(hints, 44), ["Ctrl+O expand · Ctrl+P model"]);
+});
+
+test("below 60 terminal columns the panel keeps within half the terminal height, scrolling options whose descriptions take a second row", async (t) => {
+	densityTerminal(t, 44);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-cap",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = renderRaw(44).map((line) => stripTerminalSequences(line));
+	assert.ok(lines.length <= 15, `${lines.length} rows`);
+	assert.deepEqual(lines.slice(3, 7), [
+		"│ ▸ 1  Gradual rollout                     │",
+		"│      Start with a small test group and   │",
+		"│      monitor results.                    │",
+		"│      ↓ 2 more                            │",
+	]);
+	send("X");
+	await pending;
+});
+
+test("crossing 60 terminal columns with the panel open keeps the selection and moves the hints between the panel and the footer", async (t) => {
+	const terminal = densityTerminal(t, 59);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(hints);
+	const { ctx, send, renderRaw } = tuiContext(40);
+	const pending = tool.execute(
+		"call-narrow-cross",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	send(DOWN);
+	const shown = (columns) => {
+		terminal.columns = columns;
+		return renderRaw(columns).map((line) => stripTerminalSequences(line));
+	};
+	const inside = "↑/↓ move · Enter select · z edit free text";
+	const focused = (line) => line.startsWith("│ ▸ 2  Full rollout ");
+	let lines = shown(59);
+	assert.ok(lines.some(focused));
+	assert.ok(lines.some((line) => line.startsWith(`│ ${inside} `)));
+	assert.deepEqual(hints.get(), []);
+	lines = shown(60);
+	assert.ok(
+		lines.some((line) =>
+			line.startsWith(" │ ❯ 2  Full rollout     Make the change available to "),
+		),
+	);
+	assert.ok(!lines.some((line) => line.includes(inside)));
+	assert.deepEqual(hints.get()?.[1], { key: "Enter", action: "select" });
+	lines = shown(59);
+	assert.ok(lines.some(focused));
+	assert.deepEqual(hints.get(), []);
+	send("\r");
+	assert.deepEqual(await pending.then((result) => result.details), {
+		status: "answered",
+		kind: "option",
+		index: 1,
+		label: "Full rollout",
+	});
+	assert.equal(hints.get(), undefined);
+});
+
+test("at 60 and 100 terminal columns the panel renders the base's bytes and publishes the base's footer hints", async (t) => {
+	const terminal = densityTerminal(t, 60);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		for (const multiple of [false, true]) {
+			const hints = createFooterHints();
+			const tool = createAskUserChoiceTool(hints);
+			const { ctx, send, renderRaw } = tuiContext(31);
+			const original = ctx.ui.custom;
+			ctx.ui.custom = (factory, options) =>
+				original(
+					(tui, _theme, keys, done) => factory(tui, sgrTheme, keys, done),
+					options,
+				);
+			const pending = tool.execute(
+				"call-wide-bytes",
+				{ ...rollout, multiple },
+				undefined,
+				undefined,
+				ctx,
+			);
+			assert.deepEqual(
+				{ lines: renderRaw(columns), hints: hints.get() },
+				wideInput.question[columns][multiple ? "multiple" : "single"],
+			);
+			send("X");
+			await pending;
+		}
 	}
 });
 

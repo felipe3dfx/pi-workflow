@@ -27,6 +27,7 @@ import {
 	setDensityTerminal,
 } from "../extensions/visual-language.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { sgrTheme, wideInput } from "./support/wide-input.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -396,30 +397,6 @@ test("below 60 terminal columns the footer joins Key action hints with · from t
 		["Ctrl+O expand · Ctrl+P model · Shift+Tab thinking  build ok"],
 	);
 });
-
-const sgrNames = [
-	"accent",
-	"border",
-	"borderAccent",
-	"dim",
-	"muted",
-	"text",
-	"thinkingHigh",
-	"mdHeading",
-	"selectedBg",
-	"warning",
-	"error",
-];
-const sgr = (color) => 16 + sgrNames.indexOf(color);
-// The theme `test/fixtures/wide-input.json` was captured with on the base.
-const sgrTheme = {
-	fg: (color, text) => `\x1b[38;5;${sgr(color)}m${text}\x1b[39m`,
-	bold: (text) => `\x1b[1m${text}\x1b[22m`,
-	bg: (color, text) => `\x1b[48;5;${sgr(color)}m${text}\x1b[49m`,
-};
-const wideInput = JSON.parse(
-	readFileSync(new URL("./fixtures/wide-input.json", import.meta.url), "utf8"),
-);
 
 test("at 60 and 100 terminal columns the footer and the editor render the base's bytes", (t) => {
 	const terminal = densityTerminal(t, 60);

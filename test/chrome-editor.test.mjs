@@ -276,6 +276,22 @@ test("below 60 terminal columns a click on a typed character lands on that chara
 	assert.deepEqual(input.getCursor(), { line: 0, col: 3 });
 });
 
+test("crossing 60 terminal columns in both directions keeps the typed text and cursor while the margin follows the terminal", (t) => {
+	const terminal = densityTerminal(t, 59);
+	const input = opus();
+	input.setText("hello world");
+	input.handleInput("\x1b[D");
+	const top = (columns) => {
+		terminal.columns = columns;
+		return input.render(columns).map(visible)[0];
+	};
+	assert.equal(top(59), `╭${"─".repeat(57)}╮`);
+	assert.equal(top(60), ` ╭${"─".repeat(56)}╮`);
+	assert.equal(top(59), `╭${"─".repeat(57)}╮`);
+	assert.equal(input.getText(), "hello world");
+	assert.deepEqual(input.getCursor(), { line: 0, col: 10 });
+});
+
 test("command names in the autocomplete rows get a slash prefix, and other completions do not", async () => {
 	const input = await editor(bare);
 	const rows = ["  plain   [user] desc", "❯ skill:pdf   Make PDFs"];

@@ -17,8 +17,8 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { FooterHints } from "./chrome.ts";
-import { marginFor } from "./chrome-editor.ts";
+import { type FooterHints, type Hint, keyHintRows } from "./chrome.ts";
+import { inputMargin } from "./chrome-editor.ts";
 import { hidden } from "./compact-tools.ts";
 import { seated } from "./shell.ts";
 import { closeChildrenView } from "./children-view.ts";
@@ -163,9 +163,43 @@ async function askPanel(
 					});
 				};
 
+				const panelHints = (): Hint[] => {
+					const hasAnyMarked = marked.size > 0;
+					const enterHint = isFreeTextRow(index)
+						? "Enter:edit free text"
+						: `Enter:${multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "select"}`;
+					const browseHintParts = ["↑/↓:move"];
+					if (multiple) browseHintParts.push("Space:mark");
+					browseHintParts.push(enterHint);
+					browseHintParts.push(
+						"z:edit free text",
+						"Esc:panel stays open",
+						"Shift+X:dismiss",
+					);
+					const editEnterHint = multiple
+						? hasAnyMarked
+							? "submit marked"
+							: "select at least one"
+						: "submit";
+					const hintParts =
+						mode === "edit"
+							? [
+									`Enter:${editEnterHint}`,
+									"↑/↓:leave & move",
+									"Esc:back to browse",
+								]
+							: browseHintParts;
+					return hintParts.map((part) => {
+						const split = part.indexOf(":");
+						return { key: part.slice(0, split), action: part.slice(split + 1) };
+					});
+				};
+
 				const component: Component = {
 					render(width) {
-						const edge = marginFor(width);
+						// Below 60 columns ADR 0031 amends the look and the hints; ADR 0019 keeps the rest.
+						const narrow = narrowScreen();
+						const edge = inputMargin(width);
 						const frameWidth = width - edge * 2;
 						const framed = frameWidth >= minFrame;
 						const contentWidth = Math.max(
@@ -185,28 +219,45 @@ async function askPanel(
 						const numberWidth = String(Math.max(options.length, 1)).length;
 						const markWidth = multiple ? 4 : 0;
 						const prefixWidth = 2 + markWidth + numberWidth + 2;
-						const pointer = (active: boolean) => (active ? strong("❯ ") : "  ");
+						const pointer = (active: boolean) =>
+							active ? strong(narrow ? "▸ " : "❯ ") : "  ";
 						const labels = options.map((option) =>
 							normalizeSingleLine(option.label),
 						);
 						const labelRoom = Math.max(0, contentWidth - prefixWidth);
-						const labelWidth = Math.min(
-							Math.max(0, ...labels.map((label) => visibleWidth(label))),
-							options.some((option) => option.description)
-								? Math.floor(0.45 * labelRoom)
-								: labelRoom,
-						);
-						const descriptionWidth =
-							contentWidth - prefixWidth - labelWidth - 2;
+						const labelWidth = narrow
+							? labelRoom
+							: Math.min(
+									Math.max(0, ...labels.map((label) => visibleWidth(label))),
+									options.some((option) => option.description)
+										? Math.floor(0.45 * labelRoom)
+										: labelRoom,
+								);
+						// Narrow descriptions sit below their label, across the label's room.
+						const descriptionWidth = narrow
+							? labelRoom
+							: contentWidth - prefixWidth - labelWidth - 2;
+						const descriptionOf = (i: number) =>
+							options[i].description
+								? normalizeSingleLine(options[i].description)
+								: "";
+						const described = (i: number) =>
+							Boolean(descriptionOf(i)) && descriptionWidth >= 4;
+						const indent = " ".repeat(prefixWidth);
+						const cut = (lines: string[], width: number, limit: number) =>
+							lines.length > limit
+								? [
+										...lines.slice(0, limit - 1),
+										truncateToWidth(`${lines[limit - 1]}…`, width, "…"),
+									]
+								: lines;
 						let wrapped: [string[], string[]] | undefined;
 						const optionRows = (
 							i: number,
 							limit = Number.POSITIVE_INFINITY,
 						) => {
 							const active = i === index;
-							const description = options[i].description
-								? normalizeSingleLine(options[i].description)
-								: "";
+							const description = descriptionOf(i);
 							const mark = multiple
 								? marked.has(i)
 									? strong("[x] ")
@@ -214,7 +265,28 @@ async function askPanel(
 								: "";
 							const number = String(i + 1).padStart(numberWidth);
 							const head = `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
-							const shown = description && descriptionWidth >= 4;
+							const shown = described(i);
+							if (narrow) {
+								const style = (text: string) =>
+									active ? strong(text) : theme.fg("text", text);
+								if (!active || labelWidth < minLabel || limit < 2)
+									return [
+										`${head}${style(truncateToWidth(labels[i], labelWidth, "…"))}`,
+										...(shown && limit >= 2
+											? [
+													`${indent}${theme.fg("dim", truncateToWidth(description, descriptionWidth, "…"))}`,
+												]
+											: []),
+									];
+								const label = wrapTextWithAnsi(labels[i], labelWidth);
+								const below = shown
+									? wrapTextWithAnsi(description, descriptionWidth)
+									: [];
+								return cut([...label, ...below], labelWidth, limit).map(
+									(line, k) =>
+										`${k === 0 ? head : indent}${k < label.length ? strong(line) : theme.fg("dim", line)}`,
+								);
+							}
 							if (!active || labelWidth < minLabel || limit < 2) {
 								const label = truncateToWidth(labels[i], labelWidth, "…", true);
 								const tail = shown
@@ -224,19 +296,12 @@ async function askPanel(
 									`${head}${active ? strong(label) : theme.fg("text", label)}${tail}`,
 								];
 							}
-							const cut = (lines: string[], width: number) =>
-								lines.length > limit
-									? [
-											...lines.slice(0, limit - 1),
-											truncateToWidth(`${lines[limit - 1]}…`, width, "…"),
-										]
-									: lines;
 							wrapped ??= [
 								wrapTextWithAnsi(labels[i], labelWidth),
 								shown ? wrapTextWithAnsi(description, descriptionWidth) : [],
 							];
-							const labelLines = cut(wrapped[0], labelWidth);
-							const descriptionLines = cut(wrapped[1], descriptionWidth);
+							const labelLines = cut(wrapped[0], labelWidth, limit);
+							const descriptionLines = cut(wrapped[1], descriptionWidth, limit);
 							return Array.from(
 								{
 									length: Math.max(labelLines.length, descriptionLines.length),
@@ -272,13 +337,18 @@ async function askPanel(
 									? theme.fg("text", input.getValue())
 									: theme.fg("dim", "Type your answer"));
 						const body = [...questionLines];
+						const shownHints = panelHints();
+						const inside = narrow
+							? keyHintRows(theme, shownHints, contentWidth)
+							: [];
 						if (options.length > 0) {
 							const budget = Math.max(
 								1,
 								Math.floor(tui.terminal.rows / 2) -
 									(framed ? 2 : 0) -
 									questionLines.length -
-									3,
+									3 -
+									(inside.length > 0 ? inside.length + 1 : 0),
 							);
 							const focus = Math.min(index, options.length - 1);
 							const span = (visible: number) => {
@@ -288,27 +358,28 @@ async function askPanel(
 								);
 								return [first, first + visible];
 							};
+							// An unfocused row takes one line, two narrow when its description shows below.
+							const short = (i: number) => (narrow && described(i) ? 2 : 1);
 							const height = (visible: number, tall: number) => {
 								const [first, last] = span(visible);
-								return (
-									visible -
-									1 +
-									tall +
-									(first > 0 ? 1 : 0) +
-									(last < options.length ? 1 : 0)
-								);
+								let rows =
+									(first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
+								for (let i = first; i < last; i++)
+									rows += i === index ? tall : short(i);
+								return rows;
 							};
 							const tall = active ? 1 : optionRows(index).length;
 							let visible =
-								options.length - 1 + tall <= budget
+								height(options.length, tall) <= budget
 									? options.length
 									: Math.max(1, budget - tall - 1);
+							while (visible > 1 && height(visible, tall) > budget) visible--;
 							if (
 								visible + 1 < options.length &&
 								height(visible + 1, tall) <= budget
 							)
 								visible++;
-							if (options.length <= height(visible, 1))
+							if (height(options.length, 1) <= height(visible, 1))
 								visible = options.length;
 							const activeRows = active
 								? []
@@ -338,6 +409,7 @@ async function askPanel(
 							body.push("");
 						}
 						body.push(freeRow);
+						if (inside.length > 0) body.push("", ...inside);
 						const lines = body.map(row);
 						if (framed) {
 							const caption =
@@ -351,40 +423,8 @@ async function askPanel(
 									border("─╯"),
 							);
 						}
-						const hasAnyMarked = marked.size > 0;
-						const enterHint = isFreeTextRow(index)
-							? "Enter:edit free text"
-							: `Enter:${multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "select"}`;
-						const browseHintParts = ["↑/↓:move"];
-						if (multiple) browseHintParts.push("Space:mark");
-						browseHintParts.push(enterHint);
-						browseHintParts.push(
-							"z:edit free text",
-							"Esc:panel stays open",
-							"Shift+X:dismiss",
-						);
-						const editEnterHint = multiple
-							? hasAnyMarked
-								? "submit marked"
-								: "select at least one"
-							: "submit";
-						const hintParts =
-							mode === "edit"
-								? [
-										`Enter:${editEnterHint}`,
-										"↑/↓:leave & move",
-										"Esc:back to browse",
-									]
-								: browseHintParts;
-						hints.set(
-							hintParts.map((part) => {
-								const split = part.indexOf(":");
-								return {
-									key: part.slice(0, split),
-									action: part.slice(split + 1),
-								};
-							}),
-						);
+						// Narrow, the panel shows its hints itself and leaves the footer empty (S-08).
+						hints.set(narrow ? [] : shownHints);
 						return lines.map((line) =>
 							truncateToWidth(" ".repeat(edge) + line, width),
 						);
