@@ -198,7 +198,21 @@ export function hintRows(
 		}
 	});
 	const spans: HintSpan[] = [];
-	const lines = rows.map((row, y) => {
+	const lines: string[] = [];
+	rows.forEach((row) => {
+		const [key, action] = row.length === 1 ? hints[row[0]] : ["", ""];
+		if (narrow && visibleWidth(`${key} ${action}`) > width) {
+			// A lone narrow hint wider than the row wraps onto continuation
+			// rows, each still clicking that hint, rather than cutting it (NS-13).
+			const styled = `${t.bold(t.fg("text", key))} ${t.fg("dim", action)}`;
+			for (const piece of wrapTextWithAnsi(styled, width)) {
+				const end = visibleWidth(piece);
+				spans.push({ index: row[0], row: lines.length, start: 0, end });
+				lines.push(fit(piece, width, "…"));
+			}
+			return;
+		}
+		const y = lines.length;
 		const total =
 			row.reduce(
 				(sum, index) => sum + visibleWidth(hints[index].join(" ")),
@@ -218,7 +232,7 @@ export function hintRows(
 			line += `${t.bold(t.fg("text", key))} ${t.fg("dim", action)}`;
 			x += size;
 		});
-		return fit(line, width, narrow ? "…" : "");
+		lines.push(fit(line, width, narrow ? "…" : ""));
 	});
 	return { lines, spans };
 }

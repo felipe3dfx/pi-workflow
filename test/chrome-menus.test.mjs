@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+	ExtensionEditorComponent,
 	ExtensionInputComponent,
 	ExtensionSelectorComponent,
 	getSelectListTheme,
@@ -14,12 +15,16 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
+	getKeybindings,
 	Input,
+	KeybindingsManager,
 	SelectList,
 	SettingsList,
 	Spacer,
 	stripTerminalSequences,
+	setKeybindings,
 	Text,
+	TUI_KEYBINDINGS,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
@@ -780,6 +785,54 @@ test("below 60 terminal columns a Pi selector reads its hints Key action joined 
 			`${strong("Enter")} ${theme.fg("dim", "submit")}${theme.fg("dim", " · ")}`,
 		),
 	);
+});
+
+test("below 60 terminal columns a Pi editor wraps a configured newline hint wider than its row instead of cutting the action", (t) => {
+	patched(t);
+	densityTerminal(t, 43);
+	const previous = getKeybindings();
+	setKeybindings(
+		new KeybindingsManager(
+			{
+				...TUI_KEYBINDINGS,
+				"app.editor.external": { defaultKeys: "ctrl+g" },
+			},
+			{ "tui.input.newLine": ["shift+enter", "ctrl+j", "ctrl+shift+enter"] },
+		),
+	);
+	t.after(() => setKeybindings(previous));
+	const editor = new ExtensionEditorComponent(
+		{ terminal: { rows: 40 }, requestRender() {} },
+		getKeybindings(),
+		"Edit",
+		"",
+		() => {},
+		() => {},
+	);
+	const shown = trimmed(editor.render(43)).join("\n");
+	assert.ok(!shown.includes("…"), shown);
+	assert.match(
+		shown,
+		/Shift\+Enter\/Ctrl\+J\/Ctrl\+Shift\+Enter\s*\n\s+newline/,
+	);
+	const { lines, spans } = hintRows(
+		theme,
+		[
+			["Enter", "submit"],
+			["Ctrl+Shift+Enter", "newline"],
+		],
+		20,
+		{ narrow: true },
+	);
+	assert.deepEqual(plain(lines), [
+		"Enter submit",
+		"Ctrl+Shift+Enter",
+		"newline",
+	]);
+	assert.deepEqual(spans.slice(1), [
+		{ index: 1, row: 1, start: 0, end: 16 },
+		{ index: 1, row: 2, start: 0, end: 7 },
+	]);
 });
 
 test("a Pi selector switches its hints and marker on the next render as the terminal crosses 60 columns either way", (t) => {
