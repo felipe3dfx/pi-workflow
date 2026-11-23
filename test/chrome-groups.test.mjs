@@ -15,6 +15,7 @@ import {
 	Markdown,
 	ScrollView,
 	setCapabilityOverrides,
+	TuiMainScreen,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
@@ -770,6 +771,40 @@ test("in a 44-column terminal, with or without the scrollbar, no transcript bloc
 	}
 });
 
+test("crossing 60 terminal columns in both directions moves the same Asked answer arrow into the lane and back", (t) => {
+	const { render } = transcript(t);
+	const terminal = densityTerminal(t, 60);
+	const arrow = [];
+	for (const columns of [60, 44, 60]) {
+		terminal.columns = columns;
+		const lines = render(columns - 1);
+		const answer = lines.find((line) => line.includes("↳ Gradual rollout"));
+		arrow.push(answer.indexOf("↳"));
+	}
+	assert.deepEqual(arrow, [5, 0, 5]);
+});
+
+test("at 60 and 100 terminal columns the selection background reaches the last column", (t) => {
+	const { mode } = transcript(t);
+	t.after(() => transcriptCursor.leave());
+	const terminal = densityTerminal(t, 60);
+	mode.chatContainer.render(59);
+	assert.ok(transcriptCursor.move(-1));
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths) {
+			const lines = mode.chatContainer.render(width);
+			const selection = lines.find((line) => line.includes("▸"));
+			assert.ok(selection.startsWith("\x1b[48;"), selection);
+			assert.equal(selection.indexOf("\x1b[49m"), selection.length - 5);
+			assert.equal(visibleWidth(selection), width, `${width} in ${columns}`);
+		}
+	}
+});
+
 function wideTranscript(t) {
 	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
 	t.after(() => setCapabilityOverrides({}));
@@ -986,6 +1021,7 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 		scroll.updateLayout(lines.length, 8, () => {});
 		return lines;
 	};
+	const { tui, editor, press } = focusedEditor(t, terminal);
 	const container = mode.chatContainer;
 	const thinking = render(43).indexOf("◆ Thought");
 	assert.ok(mouse(container, 43, "click", thinking)?.handled);
@@ -1003,7 +1039,8 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	assert.ok(narrow.length - 8 < top, "the narrow layout clamps the anchor");
 	assert.equal(scroll.scrollTop, narrow.length - 8);
 	assert.equal(scroll.isFollowingEnd, false);
-	assert.ok(transcriptCursor.toggle());
+	press("\r");
+	assert.equal(tui.getFocusedComponent(), editor);
 	assert.equal(last.expanded, true);
 	terminal.columns = 60;
 	const wide = frame().map((line) => stripVTControlCharacters(line).trimEnd());
@@ -1012,13 +1049,56 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	assert.ok(wide.includes("   ┃ $ ls"));
 	assert.equal(scroll.scrollTop, top);
 	assert.equal(scroll.isFollowingEnd, false);
-	assert.ok(transcriptCursor.toggle());
+	press(" ");
+	assert.equal(tui.getFocusedComponent(), editor);
 	assert.equal(last.expanded, false);
 	terminal.columns = 44;
 	assert.deepEqual(frame(), narrow);
 	assert.equal(command.expanded, true);
 	assert.equal(transcriptCursor.active(), true);
 });
+
+// A Chrome editor focused in Pi's TUI, whose terminal reads the density
+// terminal's columns; `press` sends a key through the terminal input path.
+function focusedEditor(t, density) {
+	let input;
+	const terminal = {
+		start(onInput) {
+			input = onInput;
+		},
+		stop() {},
+		async drainInput() {},
+		write() {},
+		get columns() {
+			return density.columns;
+		},
+		rows: 24,
+		kittyProtocolActive: false,
+		moveBy() {},
+		hideCursor() {},
+		showCursor() {},
+		clearLine() {},
+		clearFromCursor() {},
+		clearScreen() {},
+		setTitle() {},
+		setProgress() {},
+	};
+	const tui = new TuiMainScreen(terminal);
+	const editor = createChromeEditor(
+		tui,
+		{ borderColor: (text) => text, selectList: {} },
+		{ matches: () => false },
+		{
+			theme: () => ({ fg: (_c, x) => x, bold: (x) => x, bg: (_c, x) => x }),
+			label: () => "m",
+		},
+	);
+	tui.addChild(editor);
+	tui.setFocus(editor);
+	tui.start();
+	t.after(() => tui.stop());
+	return { tui, editor, press: (key) => input(key) };
+}
 
 function scrollStates(scroll, contents) {
 	return contents.map((content) => {
