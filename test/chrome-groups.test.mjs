@@ -910,7 +910,7 @@ test("at 60 and 100 terminal columns multi-line user and assistant messages keep
 		content: long,
 		timestamp: at1155,
 	});
-	say([said(long)], "stop");
+	say([said("Checked the layout."), said(long)], "stop");
 	assertWideBytes(t, mode.chatContainer, wideBytes.stamp);
 });
 
