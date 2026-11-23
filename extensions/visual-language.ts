@@ -4,6 +4,22 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
+const TERMINAL = Symbol.for("pi-workflow:visual-language:terminal");
+
+const narrowColumns = 60;
+
+type Columns = { readonly columns: number };
+const densityTerminalSlots = globalThis as Record<symbol, Columns | undefined>;
+
+export function setDensityTerminal(terminal: Columns | undefined) {
+	densityTerminalSlots[TERMINAL] = terminal;
+}
+
+// Read on every call: density follows a resize on the next render (NS-02).
+export function narrowScreen() {
+	const columns = densityTerminalSlots[TERMINAL]?.columns;
+	return typeof columns === "number" && columns < narrowColumns;
+}
 
 export const spinnerMs = 133;
 export const workingFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];

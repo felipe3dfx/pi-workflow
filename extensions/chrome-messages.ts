@@ -43,6 +43,7 @@ import {
 	formatDuration,
 	initializedTheme,
 	minThoughtMs,
+	narrowScreen,
 	theme,
 	themeVar,
 } from "./visual-language.ts";
@@ -56,6 +57,7 @@ const minTextWidth = 20;
 export const assistantInset = 3;
 const userMargin = 1;
 const userInset = 2;
+const narrowUserPadding = 1;
 const imageLine = new RegExp(`${String.fromCharCode(27)}(?:_G|\\]1337;File=)`);
 const foregroundCodes = new RegExp(
 	`${String.fromCharCode(27)}\\[(?:3[0-79]|9[0-7]|38[;:][\\d;:]+)m`,
@@ -107,8 +109,45 @@ const shared = slots[SHARED];
 const { userStamps, thinkingTimes } = shared;
 let pendingUserStamp: number | undefined;
 
-export function edgeFor(edge: number, outer: number) {
+function edgeFor(edge: number, outer: number) {
 	return Math.min(edge, Math.max(0, Math.floor((outer - minTextWidth) / 2)));
+}
+
+type Pointer = { x: number; width: number };
+
+export type Margin = {
+	left: number;
+	right: number;
+	width: number;
+	mouse<E extends Pointer>(event: E): E | undefined;
+};
+
+const blockRight = 1;
+
+export function blockMargin(
+	edge: number,
+	outer: number,
+	narrowRight = blockRight,
+): Margin {
+	const side = edgeFor(edge, outer);
+	const narrow = narrowScreen();
+	const left = narrow ? 0 : side;
+	const right = narrow ? narrowRight : side;
+	return {
+		left,
+		right,
+		width: Math.max(0, outer - left - right),
+		mouse(event) {
+			const width = event.width - left - right;
+			const x = event.x - left;
+			if (x < 0 || x >= width) return undefined;
+			return { ...event, x, width };
+		},
+	};
+}
+
+function lane() {
+	return narrowScreen() ? "  " : "";
 }
 
 class Framed implements Component {
@@ -116,18 +155,20 @@ class Framed implements Component {
 	host = new Container();
 	frame: () => Frame;
 	edge: number;
+	narrowRight: number;
 
-	constructor(child: Component, frame: () => Frame, edge = 0) {
+	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
 		this.host.addChild(child);
 		this.frame = frame;
 		this.edge = edge;
+		this.narrowRight = narrowRight;
 	}
 
 	render(outer: number) {
-		const edge = edgeFor(this.edge, outer);
-		const margin = " ".repeat(edge);
-		return this.renderInside(outer - edge * 2).map((line) => margin + line);
+		const { left, width } = blockMargin(this.edge, outer, this.narrowRight);
+		const margin = " ".repeat(left);
+		return this.renderInside(width).map((line) => margin + line);
 	}
 
 	renderInside(width: number) {
@@ -151,18 +192,21 @@ class Framed implements Component {
 	}
 
 	handleMouse(event: TuiMouseEvent) {
-		const edge = edgeFor(this.edge, event.width);
-		const width = event.width - edge * 2;
+		const inside = blockMargin(this.edge, event.width, this.narrowRight).mouse(
+			event,
+		);
+		if (!inside) return undefined;
+		const { width } = inside;
 		const { first, stamp = "", trail = 0 } = this.frame();
 		const prefix = visibleWidth(first);
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
 		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
 		const offset = width - prefix < 1 ? 0 : prefix;
 		const inner = width - offset - (stamped ? reserve : 0);
-		const x = event.x - edge - offset;
+		const x = inside.x - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
 			return undefined;
-		return this.host.handleMouse({ ...event, x, width: inner });
+		return this.host.handleMouse({ ...inside, x, width: inner });
 	}
 
 	invalidate() {
@@ -295,16 +339,17 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 class ThinkingHeader implements Component {
 	parts: HeaderParts;
 	edge: number;
+	narrowRight: number;
 
-	constructor(parts: HeaderParts, edge: number) {
+	constructor(parts: HeaderParts, edge = 0, narrowRight = 0) {
 		this.parts = parts;
 		this.edge = edge;
+		this.narrowRight = narrowRight;
 	}
 
 	render(outer: number) {
-		const edge = edgeFor(this.edge, outer);
-		const width = Math.max(0, outer - edge * 2);
-		const line = `${" ".repeat(edge)}${truncateToWidth(thinkingHeader(this.parts, width), width)}`;
+		const { left, width } = blockMargin(this.edge, outer, this.narrowRight);
+		const line = `${" ".repeat(left)}${truncateToWidth(thinkingHeader(this.parts, width), width)}`;
 		return [`${line}${" ".repeat(Math.max(0, outer - visibleWidth(line)))}`];
 	}
 
@@ -374,6 +419,7 @@ function expandedThinking(
 			return { first: bar, rest: bar };
 		},
 		state.outputPad * assistantInset,
+		blockRight,
 	);
 }
 
@@ -382,6 +428,7 @@ function notice(text: string, inset: number) {
 		new Text(theme().fg("muted", text), 0, 0),
 		() => ({ first: `${theme().fg("error", "◆")} `, rest: "  " }),
 		inset,
+		blockRight,
 	);
 }
 
@@ -416,8 +463,13 @@ function updateContent(
 			this.contentContainer.addChild(
 				new Framed(
 					markdown,
-					() => ({ first: "", rest: "", stamp: stamp(message.timestamp) }),
+					() => ({
+						first: lane(),
+						rest: lane(),
+						stamp: stamp(message.timestamp),
+					}),
 					inset,
+					blockRight,
 				),
 			);
 		} else if (content.type === "thinking") {
@@ -465,8 +517,9 @@ function updateContent(
 								shared.latestCollapsed.runIndex === runIndex,
 						},
 						inset,
+						blockRight,
 					)
-				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header, 0));
+				: expandedThinking(this, thinkingBlocks, new ThinkingHeader(header));
 			const region = new MouseRegion(thinkingComponent, (event) => {
 				if (event.type !== "click" || event.button !== "left") return undefined;
 				if (!hidden && event.y > 0) return undefined;
@@ -524,6 +577,26 @@ function promptLines(text: string, width: number) {
 	});
 }
 
+class DensityAwareBox extends Box {
+	widePaddingX: number;
+	appliedPaddingX: number;
+
+	constructor(widePaddingX: number, bg: (text: string) => string) {
+		super(widePaddingX, 1, bg);
+		this.widePaddingX = widePaddingX;
+		this.appliedPaddingX = widePaddingX;
+	}
+
+	render(width: number) {
+		const pad = narrowScreen() ? narrowUserPadding : this.widePaddingX;
+		if (pad !== this.appliedPaddingX) {
+			this.appliedPaddingX = pad;
+			this.setPaddingX(pad);
+		}
+		return super.render(width);
+	}
+}
+
 class PromptText implements Component {
 	text: string;
 
@@ -542,8 +615,9 @@ function rebuild(this: UserState) {
 	if (!userStamps.has(this)) userStamps.set(this, pendingUserStamp);
 	const timestamp = userStamps.get(this);
 	this.clear();
-	const contentBox = new Box(this.outputPad * userInset, 1, (content: string) =>
-		theme().bg("userMessageBg", content),
+	const contentBox = new DensityAwareBox(
+		this.outputPad * userInset,
+		(content: string) => theme().bg("userMessageBg", content),
 	);
 	contentBox.addChild(
 		new Framed(new PromptText(this.text), () => ({
@@ -595,12 +669,60 @@ function transcriptViewport(mode: unknown): Viewport {
 	};
 }
 
+type Layout = {
+	currentScrollTop: number;
+	readonly isFollowingEnd: boolean;
+	scrollTo(top: number, options: { disableFollow: true }): void;
+	updateLayout(content: number, viewport: number, render?: () => void): void;
+};
+
+const anchoredViews = new Set<Layout>();
+
+// A reflow across the density threshold must not turn follow-end on for a
+// manual position, and a clamped position returns once the content is tall
+// enough again (NS-02). Every other layout is Pi's own.
+function holdAnchor(scroll: Layout) {
+	if (anchoredViews.has(scroll) || typeof scroll.updateLayout !== "function")
+		return;
+	anchoredViews.add(scroll);
+	const layout = scroll.updateLayout;
+	let narrow = narrowScreen();
+	let held: { top: number; shown: number } | undefined;
+	scroll.updateLayout = function (this: Layout, content, viewport, render) {
+		const crossed = narrow !== narrowScreen();
+		narrow = narrowScreen();
+		if (held?.shown !== this.currentScrollTop) held = undefined;
+		if (this.isFollowingEnd || (!crossed && !held)) {
+			held = undefined;
+			return layout.call(this, content, viewport, render);
+		}
+		const top = held?.top ?? this.currentScrollTop;
+		this.currentScrollTop = top;
+		layout.call(this, content, viewport, render);
+		held =
+			this.currentScrollTop < top
+				? { top, shown: this.currentScrollTop }
+				: undefined;
+		if (this.isFollowingEnd)
+			this.scrollTo(this.currentScrollTop, { disableFollow: true });
+	};
+}
+
+function releaseAnchors() {
+	for (const scroll of anchoredViews)
+		delete (scroll as Partial<Layout>).updateLayout;
+	anchoredViews.clear();
+}
+
 function foldChat(mode: unknown) {
+	const scroll = (mode as { transcriptScrollView?: Layout })
+		.transcriptScrollView;
+	if (scroll) holdAnchor(scroll);
 	const chat = (mode as { chatContainer?: Container }).chatContainer;
 	if (chat)
 		patchChat(
 			chat,
-			(width) => edgeFor(assistantInset, width),
+			(width) => blockMargin(assistantInset, width),
 			transcriptViewport(mode),
 		);
 	return chat;
@@ -679,16 +801,106 @@ function wrapRenderToken(original: PatchMethod) {
 	} as PatchMethod;
 }
 
-type MouseEvent = { x: number; width: number };
+type BashRow = {
+	contentContainer: Container;
+	outputPad: number;
+};
+
+// One part of a native Bash row without its padding: the command header keeps
+// column 0 for its `$ ` glyph, the other parts sit after a lane that shrinks to
+// leave them one cell. Rendering and clicks share this geometry.
+class BashPart implements Component {
+	host = new Container();
+	part: Component;
+	header: boolean;
+	pad: number;
+
+	constructor(part: Component, header: boolean, pad: number) {
+		this.part = part;
+		this.host.addChild(part);
+		this.header = header;
+		this.pad = pad;
+	}
+
+	geometry(width: number) {
+		const lane = this.header ? 0 : Math.min(2, Math.max(0, width - 1));
+		const room = width - lane;
+		return { lane, room, padded: room + 2 * this.pad };
+	}
+
+	render(width: number) {
+		const { lane, room, padded } = this.geometry(width);
+		const indent = " ".repeat(lane);
+		const pad = " ".repeat(this.pad);
+		return this.host
+			.render(padded)
+			.map(
+				(line) =>
+					indent +
+					truncateToWidth(
+						line.startsWith(pad) ? line.slice(this.pad) : line,
+						room,
+						"",
+					),
+			);
+	}
+
+	handleMouse(event: TuiMouseEvent) {
+		const { lane, room, padded } = this.geometry(event.width);
+		const x = event.x - lane;
+		if (x < 0 || x >= room) return undefined;
+		return this.host.handleMouse({ ...event, x: x + this.pad, width: padded });
+	}
+
+	invalidate() {
+		this.part.invalidate?.();
+	}
+}
+
+const bashParts = new WeakMap<Component, BashPart>();
+
+function narrowBash(row: unknown) {
+	if (
+		!narrowScreen() ||
+		!(row instanceof BashExecutionComponent) ||
+		!((row as unknown as BashRow).contentContainer instanceof Container)
+	)
+		return undefined;
+	return row as unknown as BashRow;
+}
+
+// Pi lays out and dispatches the row itself, through its own Container, with
+// the content parts seen through their BashPart for the call.
+function inLane<T>(row: BashRow, run: () => T) {
+	const content = row.contentContainer;
+	const parts = content.children;
+	const shown = parts.map((part, i) => {
+		let shown = bashParts.get(part);
+		if (!shown) {
+			const pad = (part as { paddingX?: number }).paddingX ?? row.outputPad;
+			shown = new BashPart(part, i === 0, pad);
+			bashParts.set(part, shown);
+		}
+		return shown;
+	});
+	content.children = shown;
+	try {
+		return run();
+	} finally {
+		if (content.children === shown) content.children = parts;
+	}
+}
+
 function wrapRowRender(original: PatchMethod) {
+	const render = original as (this: unknown, width: number) => string[];
 	return function (this: unknown, outer: number) {
-		const edge = edgeFor(assistantInset, outer);
-		const lines = (original as (width: number) => readonly string[]).call(
-			this,
-			outer - edge * 2,
-		);
-		if (edge === 0) return lines;
-		const margin = " ".repeat(edge);
+		const { left, width } = blockMargin(assistantInset, outer);
+		const bash = narrowBash(this);
+		if (bash)
+			return width === 0 ? [] : inLane(bash, () => render.call(this, width));
+		const lines = render.call(this, width);
+		if (left === 0) return lines;
+		const margin = " ".repeat(left);
 		return lines.map((line) =>
 			imageLine.test(line) || line === ""
 				? line
@@ -698,17 +910,16 @@ function wrapRowRender(original: PatchMethod) {
 }
 
 function wrapRowMouse(original: PatchMethod) {
-	return function (this: unknown, event: MouseEvent) {
-		const edge = edgeFor(assistantInset, event.width);
-		if (edge === 0)
-			return (original as (event: MouseEvent) => unknown).call(this, event);
-		const x = event.x - edge;
-		if (x < 0 || x >= event.width - edge * 2) return undefined;
-		return (original as (event: MouseEvent) => unknown).call(this, {
-			...event,
-			x,
-			width: event.width - edge * 2,
-		});
+	const mouse = original as (this: unknown, event: Pointer) => unknown;
+	return function (this: unknown, event: Pointer) {
+		const margin = blockMargin(assistantInset, event.width);
+		const inner =
+			margin.left === 0 && margin.right === 0 ? event : margin.mouse(event);
+		if (!inner) return undefined;
+		const bash = narrowBash(this);
+		return bash
+			? inLane(bash, () => mouse.call(this, inner))
+			: mouse.call(this, inner);
 	} as PatchMethod;
 }
 
@@ -768,6 +979,7 @@ export function patchMessages() {
 export function restoreMessages() {
 	patchSet.restore();
 	restoreChat();
+	releaseAnchors();
 	thinkingTimes.clear();
 	shared.latestCollapsed = undefined;
 	shared.saveThinkingTime = undefined;

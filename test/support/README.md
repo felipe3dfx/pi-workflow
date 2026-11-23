@@ -8,6 +8,7 @@
 | `child-parent.mjs` | none (subprocess) | Parent process holding one RPC child; argv is the JSON launch (`command`, `sessionRoot`, `cwd`, `model`, `ending`); prints the child's answer, then waits or, with `ending: "shutdown"`, disposes it within `shutdownDeadline` and exits. |
 | `child-session.mjs` | `workerTools`, `spawnedTools`, `installedPackagePath` | The tool lists a child receives and the installed path of a Pi package. |
 | `config-guide.mjs` | `driveConfig`, `keys`, `press`, `click`, `wheel`, `focusOn`, `rowOf`, `title`, `body`, `plain`, `catalogOf`, themes | Drive and read the `/workflow:config` panel. |
+| `density-terminal.mjs` | `densityTerminal` | Bind a fake terminal of `columns` as the density terminal for one test, unbound after it; returns the live mutable terminal, so setting its `columns` simulates a resize. |
 | `deadline.mjs` | `within` | Await a promise for at most `ms` (default 10000), or fail with an assertion naming `what` never happened; for waits no poll can bound, such as a command awaiting its panel to close. |
 | `eventually.mjs` | `eventually` | Poll a read until its condition holds, or fail with the last value; the optional third argument sets the number of 5 ms polls (default 1000). |
 | `fake-children.mjs` | `fakeChildren`, `recordingCore`, `userEntry` | Fake child session factory with scripted runs. |

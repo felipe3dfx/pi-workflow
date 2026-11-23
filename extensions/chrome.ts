@@ -28,8 +28,10 @@ import { readHeader, watchHeader } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	formatDuration,
+	narrowScreen,
 	spinnerMs,
 	spread,
+	setDensityTerminal,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -228,8 +230,11 @@ export function renderStatusRow(
 	data: StatusData,
 	width: number,
 ) {
-	const indent = marginFor(width) ? 2 : 0;
-	const room = width - marginFor(width) * 2 - indent;
+	const narrow = narrowScreen();
+	const indent = !narrow && marginFor(width) ? 2 : 0;
+	const room = narrow
+		? Math.max(0, width - 1)
+		: width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
 	const label = terminalSafeLine(data.label);
 	const activity = data.tool
@@ -246,8 +251,10 @@ export function renderStatusRow(
 		.filter(Boolean)
 		.join(" ");
 	const left = `${theme.fg("text", spinner)} ${activity}${phase}`;
-	if (!totals) return indented([truncateToWidth(left, room)], width, indent);
-	return indented([spread(left, theme.fg("dim", totals), room)], width, indent);
+	const line = totals
+		? spread(left, theme.fg("dim", totals), room)
+		: truncateToWidth(left, room);
+	return narrow ? [line] : indented([line], width, indent);
 }
 
 const idleHints: [Keybinding, string][] = [
@@ -405,6 +412,7 @@ export function registerChrome(
 		fixed?.stop();
 		fixed = undefined;
 		renders.clear();
+		setDensityTerminal(undefined);
 		running.clear();
 		working = false;
 	}
@@ -463,6 +471,7 @@ export function registerChrome(
 			STATUS_WIDGET,
 			(tui, theme) => {
 				renders.add(tui);
+				setDensityTerminal(tui.terminal);
 				return {
 					render: (width: number) => {
 						const data = statusData();
