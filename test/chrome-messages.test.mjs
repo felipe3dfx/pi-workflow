@@ -1480,6 +1480,7 @@ test("below 60 terminal columns a multi-line user message ends its last line wit
 
 // The SGR background in effect at each visible cell of a one-cell-per-character
 // line: "default" after a reset, else its 48 parameters or its 4x/10x code.
+// Colon subparameters stay with their command.
 function cellBackgrounds(line) {
 	const cells = [];
 	let background = "default";
@@ -1492,15 +1493,18 @@ function cellBackgrounds(line) {
 	for (const [, sgr, cell] of line.matchAll(pieces)) {
 		if (cell !== undefined) cells.push(background);
 		if (sgr === undefined) continue;
-		const codes = sgr.split(/[;:]/).map((value) => Number(value || 0));
+		const codes = sgr.split(";");
 		for (let i = 0; i < codes.length; i++) {
-			const n = codes[i];
-			const extended = codes[i + 1] === 5 ? 2 : 4;
+			const [head, ...sub] = codes[i].split(":");
+			const n = Number(head || 0);
+			const extended = sub.length > 0 ? 0 : codes[i + 1] === "5" ? 2 : 4;
 			if (n === 0 || n === 49) background = "default";
 			else if ((n >= 40 && n <= 47) || (n >= 100 && n <= 107))
 				background = String(n);
 			else if (n === 48)
-				background = codes.slice(i + 1, i + 1 + extended).join(";");
+				background = (
+					sub.length > 0 ? sub : codes.slice(i + 1, i + 1 + extended)
+				).join(";");
 			if (n === 38 || n === 48) i += extended;
 		}
 	}
