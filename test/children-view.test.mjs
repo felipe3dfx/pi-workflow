@@ -999,6 +999,34 @@ test("a saturated second line keeps the full time, then compacts Steer labels, t
 	}
 });
 
+test("a saturated second line keeps a step that fits beside its time and usage", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const going = record("5636", {
+		role: "explore",
+		step: "Go",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const done = record("27c1", {
+		step: "ok",
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+	});
+	const sessions = fakeSessions([going, done], {
+		[going.id]: { entries: [] },
+		[done.id]: { entries: [scripted("s1", 1000, 0.23)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(104));
+	const at = findListRowIndex(cells, "explore 5636");
+	assert.match(cells[at + 1], /^ {6}Go +1 steer pending · 3\.2s $/);
+	assert.match(
+		cells[findListRowIndex(cells, "worker 27c1") + 1],
+		/^ {6}ok +3\.2s · 1\.0k tok · \$0\.23 $/,
+	);
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;

@@ -1538,7 +1538,8 @@ function createChildrenView(
 					].find((text) => visibleWidth(text) <= width) ??
 					`${truncateToWidth(theme.fg("warning", compact.join(" · ")), width - visibleWidth(time) - 3, "…")}${theme.fg("dim", ` · ${time}`)}`;
 				const free = width - visibleWidth(payload);
-				return free > 8
+				const room = free - 5;
+				return room >= Math.min(visibleWidth(detail), 4)
 					? spread(`    ${detail}`, payload, width)
 					: `${" ".repeat(Math.max(0, free))}${payload}`;
 			};
