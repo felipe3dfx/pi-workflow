@@ -1091,6 +1091,40 @@ test("a saturated second line never clips its Steer state or time for the incomp
 	assert.match(lines.join("\n"), /incomplete transcript \(live\)/);
 });
 
+test("a saturated second line keeps the short incomplete-transcript warning beside a pending Steer when it fits", async (t) => {
+	const child = record("5636", {
+		role: "explore",
+		step: "Go",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const view = await unparented(t, child);
+	const cells = listCells(view.lines(104));
+	const second = cells[findListRowIndex(cells, "explore 5636") + 1];
+	assert.ok(second.endsWith(" 1 pending · partial log · 3.2s "), second);
+});
+
+test("a saturated second line drops the separator before clipping a lone compact Steer label beside its full time", async (t) => {
+	for (const [undelivered, elapsed, tail] of [
+		[10, 65_000, "10 undelivered 1m 05s"],
+		[1, 605_000, "1 undelivered 10m 05s"],
+	]) {
+		const child = record("27c1", {
+			state: "completed",
+			startedAt: now - elapsed,
+			endedAt: now,
+			text: "Done.",
+			undelivered: Array.from({ length: undelivered }, (_, i) => `late ${i}`),
+		});
+		t.mock.timers.reset();
+		const view = await unparented(t, child);
+		const cells = listCells(view.lines(72));
+		const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+		assert.ok(second.endsWith(` ${tail} `), second);
+		assert.doesNotMatch(second, /…/);
+	}
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;

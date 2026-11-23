@@ -1538,6 +1538,9 @@ function createChildrenView(
 								right([time, ...rest], [...steers, ...warning]),
 							),
 						),
+						...(steers.length === 1
+							? [`${theme.fg("warning", steers[0])} ${theme.fg("dim", time)}`]
+							: []),
 					].find((text) => visibleWidth(text) <= width) ??
 					`${truncateToWidth(theme.fg("warning", steers.join(" · ")), width - visibleWidth(time) - 3, "…")}${theme.fg("dim", ` · ${time}`)}`;
 				const free = width - visibleWidth(payload);
