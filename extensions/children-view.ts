@@ -68,6 +68,7 @@ import {
 	hintRows,
 	modalFrame,
 	modalMetrics,
+	overlayAtOpen,
 	sectionRule,
 	selectedRow,
 } from "./chrome-menus.ts";
@@ -861,12 +862,12 @@ export function createChildrenViews(
 					}),
 				{
 					overlay: true,
-					overlayOptions: {
+					overlayOptions: overlayAtOpen({
 						width: "100%",
 						maxHeight: "100%",
 						anchor: "center",
 						margin: 0,
-					},
+					}),
 					onHandle: (value) => {
 						handle = value;
 					},

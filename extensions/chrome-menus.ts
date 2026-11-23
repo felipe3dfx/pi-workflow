@@ -36,7 +36,7 @@ import {
 	type PatchMethod,
 	type PatchTarget,
 } from "./chrome-patch.ts";
-import { narrowScreen, screenRows, theme } from "./visual-language.ts";
+import { densityBinding, narrowScreen, theme } from "./visual-language.ts";
 
 export type MenuTheme = Pick<Theme, "fg" | "bg" | "bold">;
 export type Hint = [key: string, action: string];
@@ -88,10 +88,28 @@ export function fit(line: string, width: number, ellipsis = "") {
 		: line;
 }
 
-// Decided once, when the overlay opens: an open overlay keeps its width and
-// padding across a resize until it is reopened (NS-09, accepted risk W9).
-export function overlayAtOpen<T extends OverlayOptions>(options: T): T {
-	return narrowScreen() ? { ...options, width: "100%" } : options;
+// Resolved once, when the overlay opens, the way Pi resolves it: an open
+// overlay keeps that width across a resize until it is reopened, and only Pi's
+// clamp to the columns left can narrow it (NS-09, accepted risk W9).
+export function overlayAtOpen(options: OverlayOptions): OverlayOptions {
+	const columns = densityBinding()?.terminal.columns;
+	if (columns === undefined) return options;
+	const { minWidth, ...fixed } = options;
+	const { margin } = options;
+	const sides =
+		typeof margin === "number"
+			? margin * 2
+			: (margin?.left ?? 0) + (margin?.right ?? 0);
+	const room = Math.max(1, columns - Math.max(0, sides));
+	if (narrowScreen()) return { ...fixed, width: room };
+	const percent = /^(\d+(?:\.\d+)?)%$/.exec(String(options.width));
+	const asked =
+		typeof options.width === "number"
+			? options.width
+			: percent
+				? Math.floor((columns * Number(percent[1])) / 100)
+				: Math.min(80, room);
+	return { ...fixed, width: Math.min(Math.max(asked, minWidth ?? 0), room) };
 }
 
 export function selectedRow(t: MenuTheme, line: string, width: number) {
@@ -379,9 +397,23 @@ function settingsHints(state: SettingsListState, width: number) {
 	return ["", ...lines.map((line) => fit(`  ${line}`, width))];
 }
 
+// Set while a settings modal renders its list: the modal's opening density in,
+// and the rows of the main list's selection and hints out.
+type MainListLayout = { count: number; selected: number; hints: number };
+
+let settingsPass: { narrow: boolean; layout?: MainListLayout } | undefined;
+
 function renderMainList(this: SettingsListState, width: number) {
 	const t = theme();
 	const lines: string[] = [];
+	let selected = -1;
+	const withHints = () => {
+		const hints = lines.length + 1;
+		lines.push(...settingsHints(this, width));
+		if (settingsPass)
+			settingsPass.layout = { count: lines.length, selected, hints };
+		return lines;
+	};
 	if (this.searchEnabled && this.searchInput) {
 		const swaps: Swap[] = [];
 		try {
@@ -394,20 +426,19 @@ function renderMainList(this: SettingsListState, width: number) {
 	}
 	if (this.items.length === 0) {
 		lines.push(fit(t.fg("dim", "  No settings available"), width));
-		if (this.searchEnabled) lines.push(...settingsHints(this, width));
-		return lines;
+		return this.searchEnabled ? withHints() : lines;
 	}
 	const displayItems = this.getDisplayItems();
 	if (displayItems.length === 0) {
 		lines.push(fit(t.fg("dim", "  No matching settings"), width));
-		lines.push(...settingsHints(this, width));
-		return lines;
+		return withHints();
 	}
 	const { startIndex, endIndex } = this.getVisibleRange(displayItems);
 	for (let i = startIndex; i < endIndex; i++) {
 		const item = displayItems[i];
 		if (!item) continue;
 		const action = !item.submenu && item.values?.length === 1;
+		if (i === this.selectedIndex) selected = lines.length;
 		lines.push(
 			menuRow(
 				t,
@@ -416,6 +447,7 @@ function renderMainList(this: SettingsListState, width: number) {
 				i === this.selectedIndex,
 				width,
 				action || Boolean(item.submenu),
+				settingsPass?.narrow,
 			),
 		);
 	}
@@ -430,8 +462,7 @@ function renderMainList(this: SettingsListState, width: number) {
 			lines.push(fit(t.fg("dim", `  ${line}`), width));
 		}
 	}
-	lines.push(...settingsHints(this, width));
-	return lines;
+	return withHints();
 }
 
 const marks = ["→ ", "› "];
@@ -710,34 +741,134 @@ function crumbs(list: SettingsListState): string[] {
 	return [label, ...(nested ? crumbs(nested) : [])].filter(Boolean);
 }
 
-const settingsDensity = new WeakMap<object, boolean>();
+// Relies on pi-tui 1.6.0 internals, as fixed-header.ts does: TuiAltScreen's
+// `mode` and private `layoutRoot`, and the layout-node symbol. Pi renders a
+// docked component without telling it its height, so the settings modal adds
+// up what the rest of the fullscreen layout takes at its width.
+const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
 
-function openedNarrow(selector: object) {
-	let narrow = settingsDensity.get(selector);
-	if (narrow === undefined) {
-		narrow = narrowScreen();
-		settingsDensity.set(selector, narrow);
-	}
-	return narrow;
+type StackEntry = {
+	component: Component;
+	basis?: number | "auto";
+	minSize?: number;
+	maxSize?: number;
+	visible?(viewport: { width: number; height: number }): boolean;
+};
+type LayoutNode = { type: string; entries?: StackEntry[]; gap?: number };
+type LayoutHost = { mode?: string; layoutRoot?: Component };
+
+function layoutNode(component: Component) {
+	const node = (component as { [LAYOUT_NODE]?: () => LayoutNode })[LAYOUT_NODE];
+	return typeof node === "function" ? node.call(component) : undefined;
+}
+
+function stackOf(
+	component: Component,
+	viewport: { width: number; height: number },
+) {
+	const node = layoutNode(component);
+	if (!node)
+		return {
+			gap: 0,
+			entries: ((component as { children?: Component[] }).children ?? []).map(
+				(child): StackEntry => ({ component: child }),
+			),
+		};
+	if (node.type !== "vstack") return undefined;
+	return {
+		gap: node.gap ?? 0,
+		entries: (node.entries ?? []).filter(
+			(entry) => entry.visible?.(viewport) ?? true,
+		),
+	};
+}
+
+function holds(
+	component: Component,
+	target: object,
+	viewport: { width: number; height: number },
+): boolean {
+	return (
+		component === target ||
+		(stackOf(component, viewport)?.entries ?? []).some((entry) =>
+			holds(entry.component, target, viewport),
+		)
+	);
+}
+
+function roomIn(
+	component: Component,
+	target: object,
+	width: number,
+	height: number,
+	viewport: { width: number; height: number },
+): number | undefined {
+	if (component === target) return height;
+	const stack = stackOf(component, viewport);
+	const at =
+		stack?.entries.findIndex((entry) =>
+			holds(entry.component, target, viewport),
+		) ?? -1;
+	if (!stack || at < 0) return undefined;
+	const others = stack.entries.reduce((sum, entry, index) => {
+		if (index === at) return sum;
+		const natural =
+			typeof entry.basis === "number"
+				? entry.basis
+				: entry.component.render(width).length;
+		const least = entry.minSize ?? 0;
+		return sum + Math.max(least, Math.min(entry.maxSize ?? natural, natural));
+	}, 0);
+	const gaps = stack.gap * (stack.entries.length - 1);
+	return roomIn(
+		stack.entries[at].component,
+		target,
+		width,
+		height - gaps - others,
+		viewport,
+	);
+}
+
+function dockRoom(target: object, width: number) {
+	const bound = densityBinding();
+	const rows = bound?.terminal.rows;
+	if (rows === undefined) return undefined;
+	const host = bound?.host as LayoutHost | undefined;
+	const root = host?.mode === "fullscreen" ? host.layoutRoot : undefined;
+	const viewport = { width, height: rows };
+	return (root && roomIn(root, target, width, rows, viewport)) ?? rows;
 }
 
 type BodyWindow = { lines: readonly string[]; row(shown: number): number };
 
-const settingsWindows = new WeakMap<object, BodyWindow>();
+type SettingsView = { narrow: boolean; window?: BodyWindow };
 
-// A body taller than its room keeps its trailing hint block, the lines after
-// the last blank one, in view and scrolls the rest around the selected row.
-function tallBody(body: readonly string[], room: number): BodyWindow {
-	if (body.length <= room) return { lines: body, row: (shown) => shown };
-	const blank = body.lastIndexOf("");
-	const pinned = blank < 0 ? 0 : Math.min(body.length - blank - 1, room - 1);
+const settingsViews = new WeakMap<object, SettingsView>();
+
+// Density is decided by the first render of each settings modal.
+function settingsView(selector: object) {
+	let view = settingsViews.get(selector);
+	if (!view) {
+		view = { narrow: narrowScreen() };
+		settingsViews.set(selector, view);
+	}
+	return view;
+}
+
+// A body taller than its room keeps the list's hints in view and scrolls the
+// rest around the selected row. The list renders last, so its rows end the body.
+function tallBody(
+	body: readonly string[],
+	room: number,
+	layout: MainListLayout | undefined,
+): BodyWindow | undefined {
+	if (body.length <= room) return undefined;
+	const offset = layout ? body.length - layout.count : 0;
+	const hints = layout ? offset + layout.hints : body.length;
+	const pinned = Math.min(body.length - hints, room - 1);
 	const rest = body.length - pinned;
-	const size = Math.max(0, room - pinned);
-	const open = theme().bg("selectedBg", "\u0000").split("\u0000")[0];
-	const focus = Math.max(
-		0,
-		body.slice(0, rest).findIndex((line) => line.includes(open)),
-	);
+	const size = room - pinned;
+	const focus = layout && layout.selected >= 0 ? offset + layout.selected : 0;
 	const start = Math.max(
 		0,
 		Math.min(focus - Math.floor(size / 2), rest - size),
@@ -758,21 +889,27 @@ function settingsFrame(width: number, narrow: boolean) {
 		left: edge + metrics.inset,
 		inner: Math.max(1, metrics.inner),
 		top: outer >= 4 ? 1 : 0,
+		close: metrics.close,
 	};
 }
 
 function renderSettings(this: SettingsSelectorState, width: number) {
 	const list = this.getSettingsList();
-	const narrow = openedNarrow(this);
-	const { edge, outer, inner, top } = settingsFrame(width, narrow);
-	const body = list.render(inner);
-	const rows = screenRows();
-	const shown =
-		narrow && rows !== undefined
-			? tallBody(body, Math.max(1, rows - top * 2))
-			: undefined;
-	if (shown) settingsWindows.set(this, shown);
-	else settingsWindows.delete(this);
+	const view = settingsView(this);
+	const { edge, outer, inner, top } = settingsFrame(width, view.narrow);
+	const pass: NonNullable<typeof settingsPass> = { narrow: view.narrow };
+	settingsPass = pass;
+	let body: readonly string[];
+	try {
+		body = list.render(inner);
+	} finally {
+		settingsPass = undefined;
+	}
+	const room = view.narrow ? dockRoom(this, width) : undefined;
+	view.window =
+		room === undefined
+			? undefined
+			: tallBody(body, Math.max(1, room - top * 2), pass.layout);
 	const border = Array<string>(top).fill("");
 	this.childLines = {
 		width: inner,
@@ -784,9 +921,13 @@ function renderSettings(this: SettingsSelectorState, width: number) {
 		"Settings",
 		...crumbs(list as unknown as SettingsListState),
 	].join(" › ");
-	return modalFrame(theme(), title, shown?.lines ?? body, outer, narrow).map(
-		(line) => " ".repeat(edge) + line,
-	);
+	return modalFrame(
+		theme(),
+		title,
+		view.window?.lines ?? body,
+		outer,
+		view.narrow,
+	).map((line) => " ".repeat(edge) + line);
 }
 
 function closeSettings(list: SettingsListState) {
@@ -797,12 +938,14 @@ function closeSettings(list: SettingsListState) {
 
 function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
-		const narrow = openedNarrow(this);
-		const { edge, outer, left, inner, top } = settingsFrame(
-			event.width,
-			narrow,
-		);
-		const shut = modalMetrics(outer, narrow).close;
+		const { narrow, window } = settingsView(this);
+		const {
+			edge,
+			left,
+			inner,
+			top,
+			close: shut,
+		} = settingsFrame(event.width, narrow);
 		const x = event.x - edge;
 		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
 			if (event.type !== "click" || event.button !== "left") return undefined;
@@ -810,12 +953,9 @@ function wrapSettingsMouse(original: PatchMethod) {
 			return { handled: true };
 		}
 		if (narrow && (event.x < left || event.x >= left + inner)) return undefined;
-		const shown = settingsWindows.get(this);
 		const row = event.y - top;
-		const y =
-			shown && row >= 0 && row < shown.lines.length
-				? top + shown.row(row)
-				: event.y;
+		if (window && (row < 0 || row >= window.lines.length)) return undefined;
+		const y = window ? top + window.row(row) : event.y;
 		const height = event.height + y - event.y;
 		return (original as MouseHandler).call(this, {
 			...shifted(event, left, inner),

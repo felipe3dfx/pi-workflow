@@ -40,9 +40,8 @@ export async function driveConfig(
 		isProjectTrusted: () => false,
 		ui: {
 			notify,
-			custom: (factory, options) =>
+			custom: (factory) =>
 				new Promise((resolve) => {
-					session.options = options;
 					const panel = factory(
 						{ requestRender() {}, terminal: { rows } },
 						theme,

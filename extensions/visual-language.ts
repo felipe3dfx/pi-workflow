@@ -8,21 +8,30 @@ const TERMINAL = Symbol.for("pi-workflow:visual-language:terminal");
 
 const narrowColumns = 60;
 
-type Columns = { readonly columns: number; readonly rows?: number };
-const densityTerminalSlots = globalThis as Record<symbol, Columns | undefined>;
+type DensityTerminal = { readonly columns: number; readonly rows?: number };
+type DensityBinding = { terminal: DensityTerminal; host?: object };
+const densityTerminalSlots = globalThis as Record<
+	symbol,
+	DensityBinding | undefined
+>;
 
-export function setDensityTerminal(terminal: Columns | undefined) {
-	densityTerminalSlots[TERMINAL] = terminal;
+// The host is the TUI that owns the terminal: only its layout knows the rows a
+// docked component is given.
+export function setDensityTerminal(
+	terminal: DensityTerminal | undefined,
+	host?: object,
+) {
+	densityTerminalSlots[TERMINAL] = terminal && { terminal, host };
+}
+
+export function densityBinding() {
+	return densityTerminalSlots[TERMINAL];
 }
 
 // Read on every call: density follows a resize on the next render (NS-02).
 export function narrowScreen() {
-	const columns = densityTerminalSlots[TERMINAL]?.columns;
+	const columns = densityTerminalSlots[TERMINAL]?.terminal.columns;
 	return typeof columns === "number" && columns < narrowColumns;
-}
-
-export function screenRows() {
-	return densityTerminalSlots[TERMINAL]?.rows;
 }
 
 export const spinnerMs = 133;

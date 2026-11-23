@@ -13,6 +13,7 @@ import {
 	SelectList,
 	type SelectListTheme,
 	type TuiMouseEvent,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import {
@@ -145,7 +146,13 @@ export function createScreenFrame(
 			frameWidth = width;
 			const screen = stack[stack.length - 1];
 			const inner = Math.max(1, modalMetrics(width, narrow).inner);
-			const head = ["", ...(notice ? [theme.fg("warning", notice), ""] : [])];
+			const warning = narrow ? wrapTextWithAnsi(notice, inner) : [notice];
+			const head = [
+				"",
+				...(notice
+					? [...warning.map((line) => theme.fg("warning", line)), ""]
+					: []),
+			];
 			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
 			const room = Math.max(0, terminalRows() - 2);
 			const space = room - head.length - tail.length;

@@ -6,48 +6,42 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import {
+	getSettingsListTheme,
 	initTheme,
 	SettingsSelectorComponent,
-	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
-import {
-	KeybindingsManager,
-	SettingsList,
-	TUI_KEYBINDINGS,
-	TuiMainScreen,
-} from "@earendil-works/pi-tui";
+import { Container, SettingsList } from "@earendil-works/pi-tui";
+import { createChatViewport } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/chat-viewport.js";
 
 import { createAdvisor } from "../extensions/advisor.ts";
 import { renderChildrenBox } from "../extensions/children-box.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
-import {
-	modalFrame,
-	patchMenus,
-	restoreMenus,
-} from "../extensions/chrome-menus.ts";
+import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
 import { capabilities } from "../extensions/configure.ts";
+import { fixHeader } from "../extensions/fixed-header.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { renderTodoBox } from "../extensions/todo-header.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
-import { catalogOf, driveConfig, keys } from "./support/config-guide.mjs";
+import { catalogOf, keys } from "./support/config-guide.mjs";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eventually } from "./support/eventually.mjs";
 import { catalog } from "./support/model-picker.mjs";
+import { piScreen } from "./support/pi-screen.mjs";
 
 initTheme("dark", false);
-const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
+const THEME = Symbol.for("@earendil-works/pi-coding-agent:theme");
+const theme = globalThis[THEME];
 const plain = (lines) => lines.map((line) => stripVTControlCharacters(line));
-const keybindings = () => new KeybindingsManager(TUI_KEYBINDINGS);
 
-const allSeated = {
+replaceSelection({
 	schemaVersion: 1,
 	capabilities: Object.fromEntries(
 		capabilities.map((capability) => [capability, true]),
 	),
 	expectations: {},
-};
-replaceSelection(allSeated);
+});
 
 const wideBytes = JSON.parse(
 	readFileSync(
@@ -56,19 +50,34 @@ const wideBytes = JSON.parse(
 	),
 );
 
-// Pi's own overlay layout turns the options into the width a component renders at.
-function overlayWidth(options, columns, rows = 40) {
-	return TuiMainScreen.prototype.resolveOverlayLayout.call(
-		TuiMainScreen.prototype,
-		options,
-		rows,
-		columns,
-		rows,
-	).width;
+function context(screen) {
+	return {
+		hasUI: true,
+		mode: "tui",
+		cwd: process.cwd(),
+		isProjectTrusted: () => false,
+		ui: { notify() {}, confirm: async () => true, custom: screen.custom },
+		modelRegistry: { getAll: () => catalog, getAvailable: () => catalog },
+	};
 }
 
-async function openGuide(t, rows = 40) {
-	const dir = withAgentDirectory(t);
+function click(x, y, width = 44, height = 40) {
+	return {
+		type: "click",
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width,
+		height,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	};
+}
+
+async function openGuide(t, screen) {
 	const commands = new Map();
 	piWorkflowExtension(
 		{
@@ -82,99 +91,69 @@ async function openGuide(t, rows = 40) {
 			registerProvider() {},
 			sendMessage() {},
 		},
-		{ agentDirectory: dir, catalog: catalogOf() },
+		{ agentDirectory: withAgentDirectory(t), catalog: catalogOf() },
 	);
-	let shown;
-	const showing = new Promise((resolve) => {
-		shown = resolve;
-	});
-	const closing = driveConfig(
-		commands.get("workflow:config"),
-		(panel, session) => shown({ panel, options: session.options }),
-		{ rows, theme },
-	);
-	const opened = await showing;
-	t.after(async () => {
+	const before = screen.opened.length;
+	const closing = commands.get("workflow:config").handler("", context(screen));
+	await eventually(() => screen.opened.length > before);
+	const opened = screen.opened.at(-1);
+	opened.close = async () => {
 		opened.panel.handleInput(keys.escape);
 		opened.panel.handleInput(keys.escape);
 		await closing;
-	});
-	return opened;
-}
-
-function uiContext(rows = 40) {
-	const opened = [];
-	return {
-		opened,
-		ctx: {
-			hasUI: true,
-			mode: "tui",
-			ui: {
-				notify() {},
-				confirm: async () => true,
-				custom: (factory, options) =>
-					new Promise((resolve) => {
-						opened.push({
-							options,
-							panel: factory(
-								{ requestRender() {}, terminal: { rows } },
-								theme,
-								keybindings(),
-								resolve,
-							),
-						});
-					}),
-			},
-			modelRegistry: {
-				getAll: () => catalog,
-				getAvailable: () => catalog,
-			},
-		},
 	};
+	t.after(() => (opened.closed ? undefined : opened.close()));
+	return opened;
 }
 
 const longModel = "openai-codex/gpt-6-astra";
 
-async function openProfiles(t, rows = 40) {
+async function openProfiles(t, screen, profiles) {
 	const dir = withAgentDirectory(t);
 	await mkdir(dir, { recursive: true });
 	await writeFile(
 		join(dir, "pi-workflow-models.json"),
 		JSON.stringify({
 			schemaVersion: 2,
-			active: "daily",
-			profiles: {
+			active: Object.keys(profiles ?? { daily: 0 })[0],
+			profiles: profiles ?? {
 				daily: { worker: { model: longModel, thinking: "xhigh" } },
 			},
 		}),
 	);
-	const { ctx, opened } = uiContext(rows);
-	void createModelProfiles(dir).edit(ctx);
-	for (let i = 0; i < 100 && opened.length === 0; i++)
-		await new Promise((resolve) => setImmediate(resolve));
-	return opened[0];
+	const before = screen.opened.length;
+	void createModelProfiles(dir).edit(context(screen));
+	assert.equal(screen.opened.length, before + 1);
+	const opened = screen.opened.at(-1);
+	opened.close = () => opened.panel.handleInput(keys.escape);
+	return opened;
 }
 
-async function openAdvisorPicker(t, rows = 40) {
-	const { ctx, opened } = uiContext(rows);
-	void createAdvisor(withAgentDirectory(t)).choose(ctx);
-	return opened[0];
+function openAdvisorPicker(t, screen) {
+	const before = screen.opened.length;
+	void createAdvisor(withAgentDirectory(t)).choose(context(screen));
+	assert.equal(screen.opened.length, before + 1);
+	const opened = screen.opened.at(-1);
+	opened.close = () => opened.panel.handleInput(keys.escape);
+	return opened;
 }
 
-function settingsSelector(
+function settingsSelector({
 	description = "Compact the context when it fills up",
-) {
+	value = "on",
+	changes = [],
+} = {}) {
 	const list = new SettingsList(
 		Array.from({ length: 6 }, (_, i) => ({
 			id: `setting-${i}`,
 			label: `Setting ${i}`,
-			currentValue: "on",
-			values: ["on", "off"],
+			currentValue: value,
+			values: [value, "off"],
 			description,
 		})),
 		10,
 		getSettingsListTheme(),
-		() => {},
+		(id, chosen) => changes.push([id, chosen]),
 		() => {},
 		{ enableSearch: true },
 	);
@@ -224,30 +203,18 @@ function freezeClock(t) {
 	t.mock.timers.enable({ apis: ["Date"], now: clock });
 }
 
-function openFleet(t, rows = 24) {
-	let opened;
+function openFleet(t, screen) {
 	const views = createChildrenViews(
 		fakeSessions([childRecord("5636"), childRecord("a809")]),
 		emptyAudit,
 		{ text: () => undefined },
 		() => () => {},
 	);
-	void views.open({
-		ui: {
-			custom(factory, options) {
-				opened = {
-					options,
-					panel: factory(
-						{ requestRender() {}, terminal: { rows } },
-						theme,
-						keybindings(),
-						() => {},
-					),
-				};
-				return new Promise(() => {});
-			},
-		},
-	});
+	const before = screen.opened.length;
+	void views.open({ ui: { custom: screen.custom } });
+	assert.equal(screen.opened.length, before + 1);
+	const opened = screen.opened.at(-1);
+	opened.close = () => views.close();
 	t.after(() => views.close());
 	return opened;
 }
@@ -266,109 +233,99 @@ function todoTasks(count) {
 
 const todoState = { collapsed: false, showDone: true };
 
-async function wideSurfaces(t, columns) {
-	const surfaces = {};
-	const guide = await openGuide(t);
-	surfaces.guide = {
-		options: guide.options,
-		lines: guide.panel.render(
-			overlayWidth(guide.options.overlayOptions, columns),
-		),
-	};
-	const profiles = await openProfiles(t);
-	const profilesWidth = overlayWidth(profiles.options.overlayOptions, columns);
-	surfaces.profiles = {
-		options: profiles.options,
-		lines: profiles.panel.render(profilesWidth),
-	};
-	profiles.panel.handleInput("\r");
-	profiles.panel.handleInput(keys.down);
-	surfaces.profile = { lines: profiles.panel.render(profilesWidth) };
-	profiles.panel.handleInput("\r");
-	surfaces.catalog = { lines: profiles.panel.render(profilesWidth) };
-	const { selector } = settingsSelector();
-	surfaces.settings = { lines: selector.render(columns) };
-	surfaces.box = {
-		lines: renderChildrenBox(theme, boxRecords, clock, columns),
-	};
-	surfaces.todo = {
-		lines: renderTodoBox(
-			theme,
-			todoTasks(12),
-			todoState,
-			columns,
-			new Map(),
-			40,
-			2,
-		).lines,
-	};
-	return surfaces;
+// The width Pi gave the overlay on its last frame, and the overlay at that width.
+function shown(opened) {
+	const { width } = opened.handle.getBounds();
+	return { width, lines: opened.panel.render(width) };
 }
 
-test("at 60 and 100 terminal columns the overlays and docked lists render the base's bytes", async (t) => {
+test("at 60 and 100 terminal columns the overlays and docked lists open at the base's widths and render the base's bytes", async (t) => {
 	patchMenus();
 	t.after(restoreMenus);
-	const terminal = densityTerminal(t, 60);
 	for (const columns of [60, 100]) {
-		terminal.columns = columns;
-		assert.deepEqual(
-			JSON.parse(JSON.stringify(await wideSurfaces(t, columns))),
-			wideBytes[columns],
-		);
+		const screen = piScreen(t, columns, { theme });
+		const guide = await openGuide(t, screen);
+		await screen.frame();
+		const surfaces = { guide: shown(guide) };
+		await guide.close();
+		const profiles = await openProfiles(t, screen);
+		await screen.frame();
+		surfaces.profiles = shown(profiles);
+		profiles.panel.handleInput("\r");
+		profiles.panel.handleInput(keys.down);
+		surfaces.profile = { lines: shown(profiles).lines };
+		profiles.panel.handleInput("\r");
+		surfaces.catalog = { lines: shown(profiles).lines };
+		surfaces.settings = { lines: settingsSelector().selector.render(columns) };
+		surfaces.box = {
+			lines: renderChildrenBox(theme, boxRecords, clock, columns),
+		};
+		surfaces.todo = {
+			lines: renderTodoBox(
+				theme,
+				todoTasks(12),
+				todoState,
+				columns,
+				new Map(),
+				40,
+				2,
+			).lines,
+		};
+		const advisor = openAdvisorPicker(t, screen);
+		await screen.frame();
+		surfaces.advisor = shown(advisor);
+		assert.deepEqual(surfaces, wideBytes[columns]);
 	}
 });
 
-test("at 60 and 100 terminal columns the Fleet view renders the base's bytes", (t) => {
-	const terminal = densityTerminal(t, 60);
+test("at 60 and 100 terminal columns the Fleet view opens at the base's width and renders the base's bytes", async (t) => {
 	freezeClock(t);
-	const fleet = openFleet(t);
 	for (const columns of [60, 100]) {
-		terminal.columns = columns;
-		assert.deepEqual(
-			JSON.parse(
-				JSON.stringify({
-					options: fleet.options,
-					lines: fleet.panel.render(columns),
-				}),
-			),
-			wideBytes.fleet[columns],
-		);
+		const screen = piScreen(t, columns, { rows: 24, theme });
+		const fleet = openFleet(t, screen);
+		await screen.frame();
+		assert.deepEqual(shown(fleet), wideBytes.fleet[columns]);
 	}
 });
 
 const narrowColumns = [44, 48, 52, 59];
-const plainOf = (panel, width) => plain(panel.render(width));
 
-test("below 60 terminal columns the config guide opens at the full terminal width with padding 1", async (t) => {
-	const terminal = densityTerminal(t, 44);
+test("below 60 terminal columns the config guide, model profiles, the Advisor picker and the Fleet view open through Pi at the full terminal width with padding 1", async (t) => {
+	freezeClock(t);
 	for (const columns of narrowColumns) {
-		terminal.columns = columns;
-		const guide = await openGuide(t);
-		assert.equal(guide.options.overlayOptions.width, "100%");
-		assert.equal(overlayWidth(guide.options.overlayOptions, columns), columns);
-		const lines = plainOf(guide.panel, columns);
-		assert.equal(lines[3], `│ ${"▸ [x] Child session".padEnd(columns - 4)} │`);
+		const screen = piScreen(t, columns, { theme });
+		const overlay = async (opened) => {
+			const lines = await screen.frame();
+			const { row, col, width, height } = opened.handle.getBounds();
+			assert.deepEqual({ col, width }, { col: 0, width: columns });
+			return lines.slice(row, row + height);
+		};
+
+		const guide = await openGuide(t, screen);
+		let lines = await overlay(guide);
 		assert.match(lines[0], /^┌─ Workflow config ─+ \[×\] ─┐$/);
-		assert.equal(lines[0].length, columns);
-	}
-});
+		assert.equal(lines[3], `│ ${"▸ [x] Child session".padEnd(columns - 4)} │`);
+		await guide.close();
 
-test("below 60 terminal columns model profiles and the model picker open at the full terminal width with padding 1", async (t) => {
-	const terminal = densityTerminal(t, 44);
-	for (const columns of narrowColumns) {
-		terminal.columns = columns;
-		for (const opened of [await openProfiles(t), await openAdvisorPicker(t)]) {
-			assert.equal(opened.options.overlayOptions.width, "100%");
-			assert.equal(
-				overlayWidth(opened.options.overlayOptions, columns),
-				columns,
-			);
-			const row = plainOf(opened.panel, columns).find((line) =>
-				line.includes("▸"),
-			);
+		for (const opened of [
+			await openProfiles(t, screen),
+			openAdvisorPicker(t, screen),
+		]) {
+			lines = await overlay(opened);
+			const row = lines.find((line) => line.includes("▸"));
 			assert.equal(row.length, columns);
 			assert.match(row, /^│ ▸ \S.* │$/);
+			opened.close();
 		}
+
+		const fleet = openFleet(t, screen);
+		lines = await overlay(fleet);
+		assert.match(lines[0], /^┌─ Fleet 2 · 2 active ─+ \[×\] ─┐$/);
+		assert.equal(
+			lines[2],
+			`│ ${"▸ ◐ worker 5636".padEnd(columns - 17)}running · 12s │`,
+		);
+		fleet.close();
 	}
 });
 
@@ -385,169 +342,276 @@ test("below 60 terminal columns settings render at the full terminal width with 
 	}
 });
 
-test("below 60 terminal columns the Fleet view renders at the full terminal width with padding 1", (t) => {
-	freezeClock(t);
-	const terminal = densityTerminal(t, 44);
-	for (const columns of narrowColumns) {
-		terminal.columns = columns;
-		const lines = plainOf(openFleet(t).panel, columns);
-		assert.match(lines[0], /^┌─ Fleet 2 · 2 active ─+ \[×\] ─┐$/);
-		assert.equal(lines[0].length, columns);
-		assert.equal(
-			lines[2],
-			`│ ${"▸ ◐ worker 5636".padEnd(columns - 17)}running · 12s │`,
-		);
-	}
-});
-
-test("an open overlay keeps the layout it opened with while the terminal crosses 60 columns either way, and lays out again when reopened", async (t) => {
+test("an open overlay keeps the width and padding it opened with while the terminal crosses 60 columns either way, and lays out again when reopened", async (t) => {
 	patchMenus();
 	t.after(restoreMenus);
 	freezeClock(t);
-	const terminal = densityTerminal(t, 44);
-	const frames = (opened) => [
-		plainOf(opened.guide.panel, 44),
-		plain(opened.settings.render(44)),
-		plainOf(opened.fleet.panel, 44),
-	];
+	const screen = piScreen(t, 44, { theme });
+	const overlays = ["guide", "profiles", "advisor", "fleet"];
 	const openAll = async () => ({
-		guide: await openGuide(t),
+		guide: await openGuide(t, screen),
+		profiles: await openProfiles(t, screen),
+		advisor: openAdvisorPicker(t, screen),
+		fleet: openFleet(t, screen),
 		settings: settingsSelector().selector,
-		fleet: openFleet(t),
 	});
+	const layout = async (opened) => {
+		await screen.frame();
+		return {
+			...Object.fromEntries(
+				overlays.map((name) => {
+					const { width, lines } = shown(opened[name]);
+					return [name, { width, lines: plain(lines) }];
+				}),
+			),
+			settings: plain(opened.settings.render(screen.terminal.columns)),
+		};
+	};
+	const widths = (frames) =>
+		Object.fromEntries(overlays.map((name) => [name, frames[name].width]));
+	const closeAll = async (opened) => {
+		await opened.guide.close();
+		opened.profiles.close();
+		opened.advisor.close();
+		opened.fleet.close();
+		assert.ok(overlays.every((name) => opened[name].closed));
+	};
+	const fullWidth = (frames, columns) => {
+		assert.deepEqual(widths(frames), {
+			guide: columns,
+			profiles: columns,
+			advisor: columns,
+			fleet: columns,
+		});
+		assert.equal(
+			frames.guide.lines[3],
+			`│ ${"▸ [x] Child session".padEnd(columns - 4)} │`,
+		);
+		assert.match(frames.settings[0], /^┌─ Settings/);
+		assert.equal(frames.settings[0].length, columns);
+	};
 
 	const narrow = await openAll();
-	const opening = frames(narrow);
-	assert.equal(opening[0][3], `│ ${"▸ [x] Child session".padEnd(40)} │`);
-	terminal.columns = 60;
-	assert.deepEqual(frames(narrow), opening);
-	assert.equal(narrow.guide.options.overlayOptions.width, "100%");
+	const opening = await layout(narrow);
+	fullWidth(opening, 44);
+	screen.terminal.columns = 64;
+	const grown = await layout(narrow);
+	assert.deepEqual({ ...grown, settings: [] }, { ...opening, settings: [] });
+	assert.match(grown.settings[0], /^┌─ Settings ─+ \[×\] ─┐$/);
+	assert.match(grown.settings[3], /^│ ▸ Setting 0 +on +│$/);
+	await closeAll(narrow);
 
 	const wide = await openAll();
-	assert.deepEqual(wide.guide.options.overlayOptions, {
-		anchor: "center",
-		width: "70%",
-		minWidth: 48,
-		maxHeight: "100%",
+	const wideOpening = await layout(wide);
+	assert.deepEqual(widths(wideOpening), {
+		guide: 48,
+		profiles: 44,
+		advisor: 44,
+		fleet: 64,
 	});
-	const wideOpening = frames(wide);
-	assert.equal(wideOpening[0][3], `│  ${"▸ [x] Child session".padEnd(38)}  │`);
-	assert.match(wideOpening[1][0], /^ ┌─ Settings/);
-	assert.match(wideOpening[2][0], /^ ┌─ Fleet/);
-	terminal.columns = 59;
-	assert.deepEqual(frames(wide), wideOpening);
+	assert.equal(
+		wideOpening.guide.lines[3],
+		`│  ${"▸ [x] Child session".padEnd(42)}  │`,
+	);
+	assert.match(wideOpening.fleet.lines[0], /^ ┌─ Fleet/);
+	assert.match(wideOpening.settings[0], /^ ┌─ Settings/);
+	screen.terminal.columns = 59;
+	const shrunk = await layout(wide);
+	assert.deepEqual(widths(shrunk), { ...widths(wideOpening), fleet: 59 });
+	for (const name of ["guide", "profiles", "advisor"])
+		assert.deepEqual(shrunk[name], wideOpening[name]);
+	assert.match(shrunk.fleet.lines[0], /^ ┌─ Fleet/);
+	assert.match(shrunk.settings[0], /^ ┌─ Settings/);
+	await closeAll(wide);
 
-	const reopened = await openAll();
-	assert.deepEqual(frames(reopened), opening);
+	fullWidth(await layout(await openAll()), 59);
 });
 
-test("model profiles end every cut model with … below 60 terminal columns", async (t) => {
-	const terminal = densityTerminal(t, 44);
-	const profiles = await openProfiles(t);
+const overlongModel = "openai-codex/gpt-6-astra-preview-2026-11-extended";
+
+test("model profiles end a model id cut by the row with …, and show a model id that fits whole, below 60 terminal columns", async (t) => {
+	const cut = {
+		44: "│ ▸ worker openai-codex/gpt-6-astra-pr… ›  │",
+		48: "│ ▸ worker openai-codex/gpt-6-astra-previe… ›  │",
+		52: "│ ▸ worker openai-codex/gpt-6-astra-preview-20… ›  │",
+		59: "│ ▸ worker openai-codex/gpt-6-astra-preview-2026-11-e… ›  │",
+	};
+	for (const columns of narrowColumns) {
+		const screen = piScreen(t, columns, { theme });
+		const profiles = await openProfiles(t, screen, {
+			daily: { worker: { model: overlongModel, thinking: "xhigh" } },
+		});
+		profiles.panel.handleInput("\r");
+		assert.equal(plain(profiles.panel.render(columns))[4], cut[columns]);
+	}
+	const screen = piScreen(t, 59, { theme });
+	const profiles = await openProfiles(t, screen, {
+		daily: { worker: { model: "nan/mimo-v2.5", thinking: "high" } },
+	});
 	profiles.panel.handleInput("\r");
 	assert.equal(
-		plainOf(profiles.panel, 44)[4],
-		"│ ▸ worker openai-codex/gpt-6-astra · … ›  │",
+		plain(profiles.panel.render(59))[4],
+		`│ ▸ worker${" ".repeat(14)}nan/mimo-v2.5 · thinking: high ›  │`,
 	);
-	for (const columns of [48, 52, 59]) {
-		terminal.columns = columns;
-		const reopened = await openProfiles(t);
-		reopened.panel.handleInput("\r");
-		const row = plainOf(reopened.panel, columns)[4];
-		assert.equal(row.length, columns);
-		if (row.includes("thinking: xhigh"))
-			assert.equal(
-				row,
-				"│ ▸ worker  openai-codex/gpt-6-astra · thinking: xhigh ›  │",
-			);
-		else assert.ok(row.endsWith("… ›  │"), row);
-	}
 });
 
 const longDescription =
 	"Compact the context when it fills up so the session can keep working without losing the thread of the conversation so far.";
 
-test("settings taller than a narrow screen scroll around the selected row with their hints in view, and a click reaches the row it lands on", (t) => {
-	patchMenus();
-	t.after(restoreMenus);
+const settingsHints = [
+	"│   Type search  |  Enter/Space change     │",
+	"│   Esc cancel                             │",
+];
+
+function scrollsAroundSelection(t) {
 	const terminal = densityTerminal(t, 44);
 	terminal.rows = 12;
-	const { selector, list } = settingsSelector(longDescription);
+	const { selector, list } = settingsSelector({
+		description: longDescription,
+	});
 	const frame = () => plain(selector.render(44));
-	const hints = [
-		"│   Type search  |  Enter/Space change     │",
-		"│   Esc cancel                             │",
-	];
 	let lines = frame();
 	assert.equal(lines.length, 12);
-	assert.deepEqual(lines.slice(-3, -1), hints);
+	assert.deepEqual(lines.slice(-3, -1), settingsHints);
 	assert.equal(lines.at(-1), `└${"─".repeat(42)}┘`);
 	assert.ok(lines.some((line) => line.startsWith("│ ▸ Setting 0 ")));
 
 	for (let i = 0; i < 5; i++) list.handleInput("\x1b[B");
 	lines = frame();
 	assert.equal(lines.length, 12);
-	assert.deepEqual(lines.slice(-3, -1), hints);
+	assert.deepEqual(lines.slice(-3, -1), settingsHints);
 	const row = lines.findIndex((line) => line.startsWith("│ ▸ Setting 5 "));
 	assert.ok(row > 0, lines.join("\n"));
 	assert.ok(!lines.some((line) => line.startsWith("│ ▸ Setting 0 ")));
+	return { selector, frame, row, lines };
+}
 
-	const click = (x, y) =>
-		selector.handleMouse({
-			type: "click",
-			button: "left",
-			x,
-			y,
-			screenX: x,
-			screenY: y,
-			width: 44,
-			height: lines.length,
-			shift: false,
-			alt: false,
-			ctrl: false,
-		});
-	assert.equal(click(1, row), undefined);
-	assert.equal(click(2, lines.length - 3), undefined);
+test("settings taller than a narrow screen scroll around the selected row with their hints in view, and a click reaches the row it lands on", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const { selector, frame, row, lines } = scrollsAroundSelection(t);
+	assert.equal(selector.handleMouse(click(1, row, 44, 12)), undefined);
+	assert.equal(
+		selector.handleMouse(click(2, lines.length - 3, 44, 12)),
+		undefined,
+	);
 	assert.match(frame()[row], /^│ ▸ Setting 5 +on +│$/);
-	assert.equal(click(2, row)?.handled, true);
+	assert.equal(selector.handleMouse(click(2, row, 44, 12))?.handled, true);
 	assert.match(frame()[row], /^│ ▸ Setting 5 +off +│$/);
 });
 
-test("a click on a narrow config guide row reaches that row, and a click on its padding does not", async (t) => {
+test("tall narrow settings scroll around the selected row under a theme without a selection background", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const styled = globalThis[THEME];
+	globalThis[THEME] = new Proxy(styled, {
+		get: (target, key) =>
+			key === "fg" || key === "bg"
+				? (_color, text) => text
+				: key === "bold"
+					? (text) => text
+					: Reflect.get(target, key),
+	});
+	t.after(() => {
+		globalThis[THEME] = styled;
+	});
+	scrollsAroundSelection(t);
+});
+
+test("a click below the scrolled rows of narrow settings changes no hidden setting", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const terminal = densityTerminal(t, 44);
+	terminal.rows = 7;
+	const changes = [];
+	const { selector } = settingsSelector({ changes });
+	const lines = plain(selector.render(44));
+	assert.equal(lines.length, 7);
+	assert.equal(lines.at(-1), `└${"─".repeat(42)}┘`);
+	assert.equal(selector.handleMouse(click(2, 6, 44, 7)), undefined);
+	assert.deepEqual(changes, []);
+});
+
+test("in a narrow fullscreen dock with a fixed header and a footer, tall settings keep their hints and bottom border in view", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const screen = piScreen(t, 44, { rows: 12, theme });
+	const { selector, list } = settingsSelector({
+		description: longDescription,
+	});
+	const editor = new Container();
+	editor.addChild(selector);
+	const document = new Container();
+	document.addChild({ render: () => ["transcript"], invalidate() {} });
+	const chat = createChatViewport({
+		document,
+		pendingMessages: new Container(),
+		status: new Container(),
+		widgetsAbove: new Container(),
+		editor,
+		widgetsBelow: new Container(),
+		footer: { render: () => ["FOOTER"], invalidate() {} },
+		scrollbar: "never",
+	});
+	screen.tui.setLayoutRoot(chat.root);
+	const header = fixHeader(screen.tui, {
+		render: () => ["HEADER"],
+		invalidate() {},
+	});
+	t.after(() => header.stop());
+	assert.ok(header.active());
+
+	for (const selected of [0, 5]) {
+		for (let i = 0; i < selected; i++) list.handleInput("\x1b[B");
+		const lines = await screen.frame();
+		assert.equal(lines.length, 12);
+		assert.equal(lines[0], "HEADER");
+		assert.match(lines[2], /^┌─ Settings ─+ \[×\] ─┐$/);
+		assert.deepEqual(lines.slice(8, 12), [
+			...settingsHints,
+			`└${"─".repeat(42)}┘`,
+			"FOOTER",
+		]);
+		assert.ok(
+			lines.some((line) => line.startsWith(`│ ▸ Setting ${selected} `)),
+			lines.join("\n"),
+		);
+	}
+});
+
+test("narrow settings end a value cut by the row with …", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
 	densityTerminal(t, 44);
-	const guide = await openGuide(t);
-	const click = (x, y) =>
-		guide.panel.handleMouse({
-			type: "click",
-			button: "left",
-			x,
-			y,
-			screenX: x,
-			screenY: y,
-			width: 44,
-			height: 40,
-		});
-	const row = () => plainOf(guide.panel, 44)[4];
+	const value = `provider/${"m".repeat(40)}`;
+	const lines = plain(settingsSelector({ value }).selector.render(44));
+	assert.equal(lines[3], `│ ▸ Setting… provider/${"m".repeat(16)}…    │`);
+});
+
+test("a click on a narrow config guide row reaches that row, and a click on its padding does not", async (t) => {
+	const screen = piScreen(t, 44, { theme });
+	const guide = await openGuide(t, screen);
+	const row = () => plain(guide.panel.render(44))[4];
 	assert.equal(row(), `│ ${"  [x] Todo".padEnd(40)} │`);
-	assert.equal(click(1, 4), undefined);
-	assert.equal(click(42, 4), undefined);
+	assert.equal(guide.panel.handleMouse(click(1, 4)), undefined);
+	assert.equal(guide.panel.handleMouse(click(42, 4)), undefined);
 	assert.equal(row(), `│ ${"  [x] Todo".padEnd(40)} │`);
-	assert.deepEqual(click(2, 4), { handled: true });
+	assert.deepEqual(guide.panel.handleMouse(click(2, 4)), { handled: true });
 	assert.equal(row(), `│ ${"▸ [ ] Todo".padEnd(38)} • │`);
 });
 
 test("a click on a narrow Fleet row reaches that row, and a click on its padding does not", (t) => {
 	freezeClock(t);
-	densityTerminal(t, 44);
-	const fleet = openFleet(t);
-	const click = (x, y) =>
-		fleet.panel.handleMouse({ type: "click", button: "left", x, y });
-	const row = () => plainOf(fleet.panel, 44)[4];
+	const screen = piScreen(t, 44, { rows: 24, theme });
+	const fleet = openFleet(t, screen);
+	const row = () => plain(fleet.panel.render(44))[4];
 	const unselected = `│   ◐ worker a809${" ".repeat(12)}running · 12s │`;
 	assert.equal(row(), unselected);
-	assert.equal(click(1, 4), undefined);
+	assert.equal(fleet.panel.handleMouse(click(1, 4, 44, 24)), undefined);
 	assert.equal(row(), unselected);
-	assert.deepEqual(click(2, 4), { handled: true });
+	assert.deepEqual(fleet.panel.handleMouse(click(2, 4, 44, 24)), {
+		handled: true,
+	});
 	assert.equal(row(), `│ ▸ ◐ worker a809${" ".repeat(12)}running · 12s │`);
 });
 
@@ -592,19 +656,41 @@ test("below 60 terminal columns empty docked lists render nothing and the Todo k
 	]);
 });
 
-test("below 60 terminal columns a modal line wider than its body ends with …, while descriptions hard-wrap an unbreakable token", (t) => {
+test("below 60 terminal columns settings descriptions hard-wrap an unbreakable token", (t) => {
 	patchMenus();
 	t.after(restoreMenus);
 	densityTerminal(t, 44);
 	const token = "x".repeat(60);
-	assert.deepEqual(plain(modalFrame(theme, "Head", [token], 44, true)), [
-		`┌─ Head ${"─".repeat(29)} [×] ─┐`,
-		`│ ${"x".repeat(39)}… │`,
-		`└${"─".repeat(42)}┘`,
-	]);
-	const lines = plain(settingsSelector(token).selector.render(44));
+	const lines = plain(
+		settingsSelector({ description: token }).selector.render(44),
+	);
 	const wrapped = lines
 		.map((line) => /^│ {3}(x+) +│$/.exec(line)?.[1])
 		.filter(Boolean);
 	assert.deepEqual(wrapped, ["x".repeat(36), "x".repeat(24)]);
+});
+
+const longProfile = "release-candidate-profile-for-the-narrow-screen-checks";
+
+test("below 60 terminal columns a profile heading cut by the frame ends with …", async (t) => {
+	const screen = piScreen(t, 44, { theme });
+	const profiles = await openProfiles(t, screen, { [longProfile]: {} });
+	profiles.panel.handleInput("\r");
+	assert.equal(
+		plain(profiles.panel.render(44))[0],
+		"┌─ Profile release-candidate-profil…  [×] ─┐",
+	);
+});
+
+test("below 60 terminal columns the profile name rule wraps instead of being cut", async (t) => {
+	const screen = piScreen(t, 44, { theme });
+	const profiles = await openProfiles(t, screen);
+	profiles.panel.handleInput("c");
+	for (const character of "Bad") profiles.panel.handleInput(character);
+	profiles.panel.handleInput("\r");
+	const lines = plain(profiles.panel.render(44));
+	assert.deepEqual(lines.slice(2, 4), [
+		`│ ${"Use 1 to 64 lowercase letters, digits,".padEnd(40)} │`,
+		`│ ${"or hyphens for the name.".padEnd(40)} │`,
+	]);
 });
