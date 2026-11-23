@@ -806,7 +806,7 @@ test("at 60 and 100 terminal columns the selection background reaches the last c
 	}
 });
 
-function advisorRow(t, durationMs) {
+function advisorRow(t, durationMs, text = "Sound.") {
 	const dir = withAgentDirectory(t);
 	writeAdvisorModel(dir, {
 		model: "anthropic/claude-opus-5",
@@ -829,7 +829,7 @@ function advisorRow(t, durationMs) {
 	);
 	row.updateResult(
 		{
-			content: [{ type: "text", text: "Sound." }],
+			content: [{ type: "text", text }],
 			details: { model: "anthropic/claude-opus-5", thinking: "high" },
 			isError: false,
 			durationMs,
@@ -1210,12 +1210,15 @@ test("crossing 60 terminal columns that lands a manual scroll position exactly a
 test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
 	const { mode, render } = chat(t);
 	densityTerminal(t, 44);
-	const card = advisorRow(t, 9_000);
+	const card = advisorRow(t, 9_000, "one\n\ntwo\n\nthree");
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
 	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
-	assert.match(lines[head], /^◇ Advisor {2}\S+ · claude-opus-5 \(high\)$/);
-	assert.equal(lines[head + 1], "  Sound.");
+	assert.deepEqual(lines.slice(head, head + 3), [
+		`◇ Advisor 9s${" ".repeat(29)}›`,
+		"  claude-opus-5 (high)",
+		"  one",
+	]);
 	const open = card.expanded;
 	assert.equal(mouse(mode.chatContainer, 43, "click", head, 42), undefined);
 	assert.equal(card.expanded, open);

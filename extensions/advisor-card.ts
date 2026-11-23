@@ -1,7 +1,8 @@
-import type {
-	Theme,
-	ThemeColor,
-	ToolDefinition,
+import {
+	keyText,
+	type Theme,
+	type ThemeColor,
+	type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
@@ -24,7 +25,7 @@ import {
 } from "./child-result-card.ts";
 import { hidden } from "./compact-tools.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { themeVar } from "./visual-language.ts";
+import { affordance, narrowScreen, themeVar } from "./visual-language.ts";
 
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];
 type Result = {
@@ -123,14 +124,25 @@ class AdvisorCard implements Component {
 		}
 	}
 
+	elapsed() {
+		return this.phase === "running" || this.durationMs === undefined
+			? undefined
+			: childElapsed({ createdAt: 0, endedAt: this.durationMs }, 0);
+	}
+
+	modelLine() {
+		if (!this.model) return undefined;
+		const suffix = this.thinking ? ` (${this.thinking})` : "";
+		return `${childModelLine({ model: this.model })}${suffix}`;
+	}
+
 	head(width: number) {
 		const t = this.theme;
 		const word = this.word();
 		const left = `${this.paint(glyph)} ${t.bold(t.fg("muted", "Advisor"))}${word ? ` ${word}` : ""}`;
-		const elapsed =
-			this.phase === "running" || this.durationMs === undefined
-				? undefined
-				: childElapsed({ createdAt: 0, endedAt: this.durationMs }, 0);
+		const elapsed = this.elapsed();
+		if (narrowScreen())
+			return elapsed ? `${left} ${t.fg("dim", elapsed)}` : left;
 		let model: string | undefined;
 		if (this.model) {
 			const suffix = this.thinking ? ` (${this.thinking})` : "";
@@ -146,29 +158,47 @@ class AdvisorCard implements Component {
 		return meta ? `${left}  ${t.fg("dim", meta)}` : left;
 	}
 
-	hint(inner: number) {
-		if (
-			this.phase !== "done" ||
-			preview(bodyLines(this.body, inner), false).more === 0
-		)
-			return "";
-		return expandHint(this.theme, this.expanded);
+	expandable(inner: number) {
+		return (
+			this.phase === "done" &&
+			preview(bodyLines(this.body, inner), false).more > 0
+		);
 	}
 
-	content(inner: number, unplacedHint: string) {
+	hint(inner: number, pinned: boolean) {
+		if (!this.expandable(inner)) return "";
+		return pinned
+			? affordance(this.theme)
+			: expandHint(this.theme, this.expanded);
+	}
+
+	content(inner: number, unplacedHint: string, narrow: boolean) {
 		const t = this.theme;
-		if (this.phase === "running") return [];
+		const model = this.modelLine();
+		const head = narrow && model ? [t.fg("dim", model)] : [];
+		if (this.phase === "running") return head;
 		if (this.phase !== "done") {
 			const tone = this.phase === "failed" ? "error" : "dim";
-			return wrapTextWithAnsi(this.text, inner).map((line) => t.fg(tone, line));
+			return [
+				...head,
+				...wrapTextWithAnsi(this.text, inner).map((line) => t.fg(tone, line)),
+			];
 		}
 		const { shown, more } = preview(bodyLines(this.body, inner), this.expanded);
-		if (more === 0) return shown;
+		if (more === 0) return [...head, ...shown];
+		if (narrow) return [...head, ...shown, t.fg("dim", this.tail(more))];
 		const row = t.fg("dim", `… ${more} more lines`);
 		return [...shown, unplacedHint ? `${row} ${unplacedHint}` : row];
 	}
 
+	tail(more: number) {
+		const key = keyText("app.tools.expand");
+		return `+${more} lines · tap${key ? ` or ${terminalSafeLine(key)}` : ""}`;
+	}
+
 	render(outer: number) {
+		const narrow = narrowScreen();
+		const pinned = narrow && !this.expanded;
 		return paintCard(
 			"advisor",
 			outer,
@@ -177,10 +207,11 @@ class AdvisorCard implements Component {
 				frame(
 					width,
 					(room) => this.head(room),
-					(inner) => this.hint(inner),
-					(inner, unplacedHint) => this.content(inner, unplacedHint),
+					(inner) => this.hint(inner, pinned),
+					(inner, unplacedHint) => this.content(inner, unplacedHint, narrow),
 					// chrome-messages already insets every tool row by the assistant margin.
 					0,
+					pinned,
 				),
 			() => this.plain(),
 		);

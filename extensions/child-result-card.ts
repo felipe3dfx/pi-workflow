@@ -159,7 +159,11 @@ export function frame(
 	inset = assistantInset,
 	pinned = false,
 ) {
-	const { left, width: room } = blockMargin(inset, outer);
+	const { left, width: room } = blockMargin(
+		inset,
+		outer,
+		inset === 0 ? 0 : undefined,
+	);
 	const width = Math.max(1, room);
 	const inner = Math.max(1, width - indent);
 	const top = typeof head === "string" ? head : head(width);
