@@ -790,6 +790,44 @@ test("crossing 60 terminal columns in both directions moves the same Asked answe
 	assert.deepEqual(arrow, [5, 0, 5]);
 });
 
+test("below 60 terminal columns a wrapping Asked question hangs under its first word, and the same block crossing 60 columns in both directions wraps as today wide", (t) => {
+	const { mode, render } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	asked(
+		mode,
+		"Which rollout should we use for the narrow layout on the phone?",
+		"Gradual rollout",
+	);
+	const block = (width) => {
+		const lines = render(width).map((line) => line.trimEnd());
+		const head = lines.findIndex((line) => line.includes("Asked"));
+		return lines.slice(head, head + 3);
+	};
+	const narrow = [
+		"◆ Asked Which rollout should we use for",
+		"        the narrow layout on the phone?",
+		"↳ Gradual rollout",
+	];
+	assert.deepEqual(block(43), narrow);
+	terminal.columns = 60;
+	const wide = [
+		"   ◆ Asked Which rollout should we use for the narrow",
+		"   layout on the phone?",
+		"     ↳ Gradual rollout",
+	];
+	assert.deepEqual(block(59), wide);
+	terminal.columns = 59;
+	assert.deepEqual(block(58), [
+		"◆ Asked Which rollout should we use for the narrow layout",
+		"        on the phone?",
+		"↳ Gradual rollout",
+	]);
+	terminal.columns = 44;
+	assert.deepEqual(block(43), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(block(59), wide);
+});
+
 test("at 60 and 100 terminal columns the selection background reaches the last column", (t) => {
 	const { mode } = transcript(t);
 	t.after(() => transcriptCursor.leave());

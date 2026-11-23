@@ -500,11 +500,20 @@ function askRenderers() {
 			if (options.isPartial) return hidden;
 			const question = normalizeSingleLine(context.args.question ?? "");
 			const answer = normalizeSingleLine(answerText(result.details)).trim();
-			const head = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Asked"))} ${theme.fg("dim", question)}`;
+			const label = `${theme.fg("toolTitle", "◆")} ${theme.bold(theme.fg("muted", "Asked"))} `;
 			const text = new Text("", 0, 0);
 			return {
 				render(width: number) {
-					const indent = narrowScreen() ? "" : "  ";
+					const narrow = narrowScreen();
+					const indent = narrow ? "" : "  ";
+					// Narrow, the wrapped question hangs under its first word (NS-23).
+					const hang = " ".repeat(visibleWidth(label));
+					const head = narrow
+						? `${label}${wrapTextWithAnsi(
+								theme.fg("dim", question),
+								Math.max(1, width - hang.length),
+							).join(`\n${hang}`)}`
+						: `${label}${theme.fg("dim", question)}`;
 					text.setText(
 						answer
 							? `${head}\n${indent}${theme.fg("dim", `↳ ${answer}`)}`
