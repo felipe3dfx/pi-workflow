@@ -908,7 +908,7 @@ test("below 60 terminal columns a click on a row's last content cell toggles it,
 	assert.equal(command.expanded, true);
 });
 
-test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice toggles it, and a click on the right margin next to it does not", (t) => {
+test("below 60 terminal columns a click on the last content cell of a thinking header, group label, result card or runtime notice, the › cell of the last two, opens it, and a click on the right margin next to it does not", (t) => {
 	const { mode, say, tool, card, render } = chat(t);
 	densityTerminal(t, 44);
 	say([thought(), said("Looking.")], "stop");
@@ -918,32 +918,19 @@ test("below 60 terminal columns a click on the last content cell of a thinking h
 	card("pi-workflow-child-result", result("1111"));
 	say([said("Then.")], "stop");
 	mode.chatContainer.addChild(explorationBudgetNotice());
-	for (const head of [
-		"◆ Thought",
-		"◈ Read 1 file, Searched 1 pattern",
-		"◆ Subagent worker 1111",
-		"◆ Exploration budget",
+	for (const [head, pinned] of [
+		["◆ Thought", false],
+		["◈ Read 1 file, Searched 1 pattern", false],
+		["◆ Subagent worker 1111", true],
+		["◆ Exploration budget", true],
 	]) {
 		const before = render(43);
 		const row = before.findIndex((line) => line.startsWith(head));
 		assert.ok(row >= 0, `${head}\n${before.join("\n")}`);
-		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
-		assert.deepEqual(render(43), before, head);
-		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
-		assert.notDeepEqual(render(43), before, head);
-	}
-});
-
-test("below 60 terminal columns a click on the › cell of a collapsed result card or runtime notice opens it, and a click on the margin cell beside it does not", (t) => {
-	const { mode, card, render } = chat(t);
-	densityTerminal(t, 44);
-	card("pi-workflow-child-result", result("7777"));
-	mode.chatContainer.addChild(explorationBudgetNotice());
-	for (const head of ["◆ Subagent worker 7777", "◆ Exploration budget"]) {
-		const before = render(43);
-		const row = before.findIndex((line) => line.startsWith(head));
-		const cells = Array.from(before[row]);
-		assert.deepEqual([cells.length, cells[41]], [42, "›"], head);
+		if (pinned) {
+			const cells = Array.from(before[row]);
+			assert.deepEqual([cells.length, cells[41]], [42, "›"], head);
+		}
 		assert.equal(mouse(mode.chatContainer, 43, "click", row, 42), undefined);
 		assert.deepEqual(render(43), before, head);
 		assert.ok(mouse(mode.chatContainer, 43, "click", row, 41)?.handled, head);
