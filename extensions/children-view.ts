@@ -1663,7 +1663,7 @@ function createChildrenView(
 		};
 	}
 
-	function header(item: Shown, width: number, focused: boolean) {
+	function header(item: Shown, width: number, focused: boolean, rows: number) {
 		const { child } = item;
 		const state = stateOf(item, Date.now());
 		const meta = [
@@ -1679,12 +1679,18 @@ function createChildrenView(
 			info?.health ?? item.listed?.health,
 			notes.size > 0 ? [...notes].join(" ") : undefined,
 		);
-		return [
-			spread(
-				`${glyph(item)} ${theme.bold(theme.fg(focused ? "accent" : "text", terminalSafeLine(childName(child))))}`,
-				theme.fg("dim", terminalSafeLine(state)),
-				width,
-			),
+		const title = spread(
+			`${glyph(item)} ${theme.bold(theme.fg(focused ? "accent" : "text", terminalSafeLine(childName(child))))}`,
+			theme.fg("dim", terminalSafeLine(state)),
+			width,
+		);
+		const warning =
+			capture &&
+			theme.fg(
+				"warning",
+				truncateToWidth(terminalSafeLine(capture), width, "…"),
+			);
+		const rest = [
 			theme.fg("dim", truncateToWidth(terminalSafeLine(meta), width, "…")),
 			contextRow(
 				theme,
@@ -1700,15 +1706,14 @@ function createChildrenView(
 					"…",
 				),
 			),
-			...(capture
-				? [
-						theme.fg(
-							"warning",
-							truncateToWidth(terminalSafeLine(capture), width, "…"),
-						),
-					]
-				: []),
 		];
+		if (!warning) return [title, ...rest].slice(0, rows);
+		// The capture warning comes last, but a short detail would slice it off: it then goes ahead of the metadata.
+		return (
+			rest.length + 2 <= rows
+				? [title, ...rest, warning]
+				: [title, warning, ...rest]
+		).slice(0, rows);
 	}
 
 	function head(item: Shown, width: number, focused: boolean): Block[] {
@@ -1806,7 +1811,7 @@ function createChildrenView(
 		focused: boolean,
 	) {
 		const { child } = item;
-		const top = header(item, width, focused).slice(0, rows);
+		const top = header(item, width, focused, rows);
 		detailRoom = Math.max(1, rows - top.length - 1);
 		const style = {
 			child: child.id,

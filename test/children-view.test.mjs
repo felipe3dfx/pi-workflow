@@ -1037,6 +1037,30 @@ test("a one-line row with an incomplete transcript keeps a whole Steer label and
 	}
 });
 
+test("a short one-pane Fleet keeps the whole list row and shows the incomplete-transcript warning in the detail after Enter", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	densityTerminal(t, 44);
+	const child = record("27c1", {
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(fakeSessions([child]), { rows: 10, audit: capture.audit });
+	await settle(view, 44);
+	const cells = listCells(view.lines(44));
+	const row = cells.find((cell) => cell.includes("worker 27c1"));
+	assert.ok(
+		row?.startsWith(" ▸ ◐ worker 27c1 ") &&
+			row.endsWith(" 1 steer pending · 3.2s "),
+		cells.join("\n"),
+	);
+	view.press("\r");
+	const detail = listCells((await settle(view, 44)).split("\n"));
+	assert.equal(detail.length, 10);
+	assert.match(detail[1], /^ ◐ worker 27c1 +running · 3\.2s $/);
+	assert.match(detail[2], /^ incomplete transcript \(live\)/);
+});
+
 test("a saturated second line keeps the full time, then compacts Steer labels, then drops cost, then tokens", (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
 	const pending = record("5636", {

@@ -116,7 +116,7 @@ function header(
 		legacyDurationWidth(card.elapsedMs ?? 0);
 	if (!narrowScreen() && legacy > width) return full;
 	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none,
-	// then a shorter Subagent label; the role, id and state stay whole.
+	// then a shorter Subagent label, then none; the role, id and state stay whole.
 	const cut = narrowScreen() ? "…" : "...";
 	const dim = (text: string) => theme.fg("dim", text);
 	const tight = `${line} ${dim(meta)}`;
@@ -126,8 +126,12 @@ function header(
 	if (short) return `${line} ${dim(`${short} · ${time}`)}`;
 	const timed = `${line} ${dim(time)}`;
 	const labelRoom = width - visibleWidth(`${glyph}  ${rest} ${time}`);
-	if (visibleWidth(timed) <= width || labelRoom <= visibleWidth(cut))
-		return timed;
+	if (visibleWidth(timed) <= width) return timed;
+	if (labelRoom <= visibleWidth(cut)) {
+		// No readable label fits: drop Subagent and its space before clipping the time.
+		const bare = `${glyph} ${rest} ${dim(time)}`;
+		return visibleWidth(bare) <= width ? bare : timed;
+	}
 	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
 }
 

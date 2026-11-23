@@ -207,9 +207,9 @@ test("a wide result header keeps a time that grew across a minute rollover with 
 	);
 });
 
-test("a collapsed Explorer watchdog result shortens the Subagent label before its whole time and the pinned ›", (t) => {
+test("a collapsed Explorer watchdog result shortens, then omits, the Subagent label before its whole time and the pinned ›", (t) => {
 	const { card } = cards(t);
-	densityTerminal(t, 44);
+	const terminal = densityTerminal(t, 44);
 	const result = (fields) =>
 		card({
 			customType: "pi-workflow-child-result",
@@ -228,6 +228,11 @@ test("a collapsed Explorer watchdog result shortens the Subagent label before it
 	const open = result(watchdog);
 	open.setExpanded(true);
 	assert.equal(plain(open, 43)[1], "◆ Subagent explore 5636 timed out 30m 00s");
+	terminal.columns = 38;
+	assert.equal(
+		plain(result(watchdog), 37)[1],
+		"◆ explore 5636 timed out 30m 00s   ›",
+	);
 });
 
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
