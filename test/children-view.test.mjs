@@ -1125,6 +1125,21 @@ test("a saturated second line drops the separator before clipping a lone compact
 	}
 });
 
+test("a saturated second line shortens a lone compact undelivered label to not sent, keeping the exact count and full time, before clipping it", async (t) => {
+	const child = record("27c1", {
+		state: "completed",
+		startedAt: now - 605_000,
+		endedAt: now,
+		text: "Done.",
+		undelivered: Array.from({ length: 100 }, (_, i) => `late ${i}`),
+	});
+	const view = await unparented(t, child);
+	const cells = listCells(view.lines(72));
+	const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+	assert.ok(second.endsWith(" 100 not sent 10m 05s "), second);
+	assert.doesNotMatch(second, /…/);
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
