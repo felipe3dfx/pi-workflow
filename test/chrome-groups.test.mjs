@@ -881,8 +881,7 @@ const wideBytes = JSON.parse(
 	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
 );
 
-test("at 60 and 100 terminal columns the transcript renders the base's bytes", (t) => {
-	const { mode } = wideTranscript(t);
+function assertWideBytes(t, chat, golden) {
 	const terminal = densityTerminal(t, 60);
 	for (const [columns, widths] of [
 		[60, [59, 60]],
@@ -891,11 +890,29 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 		terminal.columns = columns;
 		for (const width of widths)
 			assert.deepEqual(
-				mode.chatContainer.render(width),
-				wideBytes.transcript[width],
+				chat.render(width),
+				golden[width],
 				`${width} in ${columns}`,
 			);
 	}
+}
+
+test("at 60 and 100 terminal columns the transcript renders the base's bytes", (t) => {
+	const { mode } = wideTranscript(t);
+	assertWideBytes(t, mode.chatContainer, wideBytes.transcript);
+});
+
+test("at 60 and 100 terminal columns multi-line user and assistant messages keep the base's stamp on their first line", (t) => {
+	const { mode, say } = chat(t);
+	const long =
+		"Review the narrow terminal layout before changing the status bar, then check the wrapping rules for long messages in every block of the transcript once more.";
+	InteractiveMode.prototype.addMessageToChat.call(mode, {
+		role: "user",
+		content: long,
+		timestamp: at1155,
+	});
+	say([said("Checked the layout."), said(long)], "stop");
+	assertWideBytes(t, mode.chatContainer, wideBytes.stamp);
 });
 
 const markdownAnswer = readFileSync(
