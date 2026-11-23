@@ -81,9 +81,14 @@ const plain = (component, width = 90) =>
 		.render(width)
 		.map((line) => stripVTControlCharacters(line).trimEnd());
 
-test("a collapsed result reads its elapsed time in the shared duration format at narrow and wide widths", (t) => {
+test("a collapsed result reads its elapsed time in the shared duration format on narrow and wide terminals", (t) => {
 	const { card } = cards(t);
-	for (const width of [44, 100]) {
+	const terminal = densityTerminal(t, 44);
+	for (const [columns, width] of [
+		[44, 43],
+		[100, 100],
+	]) {
+		terminal.columns = columns;
 		for (const [elapsedMs, label] of [
 			[3_240, "3.2s"],
 			[12_400, "12s"],
@@ -97,9 +102,43 @@ test("a collapsed result reads its elapsed time in the shared duration format at
 				}),
 				width,
 			);
-			assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
+			if (columns < 60) assert.equal(row, `◆ Subagent worker 5636  ${label}`);
+			else assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
 		}
 	}
+});
+
+test("below 60 terminal columns an expanded result keeps its whole time beside its model with a single space before them", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	component.setExpanded(true);
+	assert.equal(
+		plain(component, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-mini · 3.2s",
+	);
+	const longer = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini-preview",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	longer.setExpanded(true);
+	assert.equal(
+		plain(longer, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-min… · 3.2s",
+	);
 });
 
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {

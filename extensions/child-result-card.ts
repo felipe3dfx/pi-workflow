@@ -30,7 +30,7 @@ import {
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import { narrowScreen, spread } from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -72,7 +72,13 @@ function reason(card: Card) {
 	return card.result?.reason;
 }
 
-function header(theme: Theme, card: Card, question: boolean, open: boolean) {
+function header(
+	theme: Theme,
+	card: Card,
+	question: boolean,
+	open: boolean,
+	width = Number.POSITIVE_INFINITY,
+) {
 	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
 	if (question)
@@ -81,19 +87,24 @@ function header(theme: Theme, card: Card, question: boolean, open: boolean) {
 		line += ` ${theme.fg(tone(card, question), card.state)}`;
 	if (card.verdict)
 		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
-	const meta = [
+	const model =
 		open &&
-			card.model &&
-			childModelLine({
-				model: card.model,
-				thinking: card.thinking,
-			}),
+		card.model &&
+		childModelLine({
+			model: card.model,
+			thinking: card.thinking,
+		});
+	const time =
 		card.elapsedMs !== undefined &&
-			childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0),
-	].filter(Boolean);
-	return meta.length > 0
-		? `${line}  ${theme.fg("dim", meta.join(" · "))}`
-		: line;
+		childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0);
+	const meta = [model, time].filter(Boolean).join(" · ");
+	if (!meta) return line;
+	const full = `${line}  ${theme.fg("dim", meta)}`;
+	if (!model || !time || !narrowScreen() || visibleWidth(full) <= width)
+		return full;
+	// The narrow lane keeps the whole time: one space before the metadata, then a shorter model.
+	const room = width - visibleWidth(line) - 1 - visibleWidth(` · ${time}`);
+	return `${line} ${theme.fg("dim", `${truncateToWidth(model, Math.max(0, room), "…")} · ${time}`)}`;
 }
 
 export function clean(text: string) {
@@ -233,7 +244,7 @@ class ResultCard implements Component {
 		const open = this.open();
 		return frame(
 			outer,
-			header(t, this.card, this.question, open),
+			(width) => header(t, this.card, this.question, open, width),
 			hint,
 			(inner) => {
 				const lines: string[] = [];
