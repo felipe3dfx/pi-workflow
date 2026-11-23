@@ -209,7 +209,7 @@ function compact<
 				}) ?? hidden;
 			return new View(
 				own,
-				new TruncatedText(title(name, args, theme, context)),
+				live(() => title(name, args, theme, context)),
 				bar(theme, context.expanded),
 				name === "edit",
 			);
@@ -237,6 +237,15 @@ function compact<
 			);
 		},
 	};
+}
+
+// Painted on every render, never cached at call time, so an existing row
+// follows the density of the width it is drawn at after a resize (NS-02).
+function live(
+	paint: () => string,
+	make: (text: string) => Component = (text) => new TruncatedText(text),
+): Component {
+	return { render: (width) => make(paint()).render(width), invalidate() {} };
 }
 
 function usesFallback(toolName: string, own: ToolRenderers | undefined) {
@@ -284,18 +293,14 @@ function scriptRenderers(definition: ToolRenderers | undefined) {
 			const code = (args as { code?: unknown } | undefined)?.code;
 			const own =
 				definition?.renderCall?.(args, theme, unwrapped(context)) ?? hidden;
-			const head: Component = {
-				render: (width) =>
-					new TruncatedText(
-						toolRow(
-							theme,
-							context,
-							"Run script",
-							scriptDetail(code, state.calls ?? []),
-						),
-					).render(width),
-				invalidate() {},
-			};
+			const head = live(() =>
+				toolRow(
+					theme,
+					context,
+					"Run script",
+					scriptDetail(code, state.calls ?? []),
+				),
+			);
 			return new View(own, head, bar(theme, context.expanded));
 		},
 		renderResult(
@@ -326,11 +331,11 @@ function fallbackRenderers(toolName: string, own: ToolRenderers | undefined) {
 			theme: Theme,
 			context: Status & { expanded: boolean },
 		): Component {
-			const head = title(toolName, args, theme, context);
-			const body = JSON.stringify(args ?? {}, null, 2);
+			const head = () => title(toolName, args, theme, context);
+			const body = theme.fg("dim", JSON.stringify(args ?? {}, null, 2));
 			return new View(
-				new Text(`${head}\n${theme.fg("dim", body)}`, 0, 0),
-				new TruncatedText(head),
+				live(head, (text) => new Text(`${text}\n${body}`, 0, 0)),
+				live(head),
 				bar(theme, context.expanded),
 			);
 		},

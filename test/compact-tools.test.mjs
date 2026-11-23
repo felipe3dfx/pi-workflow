@@ -16,6 +16,7 @@ import {
 	createCodemodeExtension,
 	createWriteToolDefinition,
 	initTheme,
+	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
@@ -327,6 +328,72 @@ test("below 60 terminal columns a closed tool keeps ◆ in every state and takes
 	assert.deepEqual(glyphs(), narrow);
 	terminal.columns = 100;
 	assert.deepEqual(glyphs(), wide);
+});
+
+const tones = ["error", "success", "toolTitle", "accent", "dim", "muted"];
+
+// The tone painting the first ◆ of a Pi tool row, read from the active theme.
+function markTone(rows) {
+	const palette = globalThis[themeKey];
+	const row = rows.find((line) => line.includes("◆"));
+	return tones.find((tone) => row.includes(`${palette.getFgAnsi(tone)}◆`));
+}
+
+function mountedRow(name, args, definition) {
+	return new ToolExecutionComponent(
+		name,
+		"call-1",
+		args,
+		{ showImages: false },
+		definition,
+		{ requestRender() {} },
+		"/",
+	);
+}
+
+test("a mounted built-in or MCP tool row repaints its ◆ for the density of each render after a resize, closed and open", (t) => {
+	initTheme("dark", false);
+	const bash = loadTools().get("bash");
+	const mcpName = "mcp__engram__mem_search";
+	const mcp = {
+		name: mcpName,
+		...compactToolRenderers(mcpName, () => ({ renderCall() {} })),
+	};
+	// Open, a built-in row shows Pi's own call, which carries no ◆.
+	const rows = (expanded) => [
+		...(expanded ? [] : [mountedRow("bash", { command: "true" }, bash)]),
+		mountedRow(mcpName, { query: "x" }, mcp),
+	];
+	const done = { content: [{ type: "text", text: "ok" }] };
+	const terminal = densityTerminal(t, 44);
+	const tonesAcross = (expanded, widths) => {
+		terminal.columns = widths[0];
+		const mounted = rows(expanded);
+		for (const row of mounted) {
+			row.markExecutionStarted();
+			row.updateResult(done, false);
+			row.setExpanded(expanded);
+		}
+		return widths.map((columns) => {
+			terminal.columns = columns;
+			return mounted.map((row) => markTone(row.render(columns)));
+		});
+	};
+	for (const expanded of [false, true]) {
+		const count = expanded ? 1 : 2;
+		const narrow = Array(count).fill("success");
+		const wide = Array(count).fill("toolTitle");
+		assert.deepEqual(
+			tonesAcross(expanded, [44, 60, 59, 100]),
+			[narrow, wide, narrow, wide],
+			`expanded: ${expanded}`,
+		);
+		assert.deepEqual(
+			tonesAcross(expanded, [100, 44]),
+			[wide, narrow],
+			`expanded: ${expanded}`,
+		);
+	}
 });
 
 const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
