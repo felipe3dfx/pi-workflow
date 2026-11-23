@@ -130,19 +130,12 @@ class AdvisorCard implements Component {
 			: childElapsed({ createdAt: 0, endedAt: this.durationMs }, 0);
 	}
 
-	modelLine() {
-		if (!this.model) return undefined;
-		const suffix = this.thinking ? ` (${this.thinking})` : "";
-		return `${childModelLine({ model: this.model })}${suffix}`;
-	}
-
-	head(width: number) {
+	head(width: number, narrow: boolean) {
 		const t = this.theme;
 		const word = this.word();
 		const left = `${this.paint(glyph)} ${t.bold(t.fg("muted", "Advisor"))}${word ? ` ${word}` : ""}`;
 		const elapsed = this.elapsed();
-		if (narrowScreen())
-			return elapsed ? `${left} ${t.fg("dim", elapsed)}` : left;
+		if (narrow) return elapsed ? `${left} ${t.fg("dim", elapsed)}` : left;
 		let model: string | undefined;
 		if (this.model) {
 			const suffix = this.thinking ? ` (${this.thinking})` : "";
@@ -174,8 +167,15 @@ class AdvisorCard implements Component {
 
 	content(inner: number, unplacedHint: string, narrow: boolean) {
 		const t = this.theme;
-		const model = this.modelLine();
-		const head = narrow && model ? [t.fg("dim", model)] : [];
+		const head =
+			narrow && this.model
+				? [
+						t.fg(
+							"dim",
+							childModelLine({ model: this.model, thinking: this.thinking }),
+						),
+					]
+				: [];
 		if (this.phase === "running") return head;
 		if (this.phase !== "done") {
 			const tone = this.phase === "failed" ? "error" : "dim";
@@ -186,7 +186,12 @@ class AdvisorCard implements Component {
 		}
 		const { shown, more } = preview(bodyLines(this.body, inner), this.expanded);
 		if (more === 0) return [...head, ...shown];
-		if (narrow) return [...head, ...shown, t.fg("dim", this.tail(more))];
+		if (narrow)
+			return [
+				...head,
+				...shown,
+				...wrapTextWithAnsi(t.fg("dim", this.tail(more)), inner),
+			];
 		const row = t.fg("dim", `… ${more} more lines`);
 		return [...shown, unplacedHint ? `${row} ${unplacedHint}` : row];
 	}
@@ -206,7 +211,7 @@ class AdvisorCard implements Component {
 			(width) =>
 				frame(
 					width,
-					(room) => this.head(room),
+					(room) => this.head(room, narrow),
 					(inner) => this.hint(inner, pinned),
 					(inner, unplacedHint) => this.content(inner, unplacedHint, narrow),
 					// chrome-messages already insets every tool row by the assistant margin.
@@ -218,7 +223,7 @@ class AdvisorCard implements Component {
 	}
 
 	plain() {
-		const head = plainHead(this.head(Number.POSITIVE_INFINITY), glyph);
+		const head = plainHead(this.head(Number.POSITIVE_INFINITY, false), glyph);
 		if (this.phase === "running" || !this.text) return head;
 		if (this.phase !== "done") return `${head}\n${this.text}`;
 		const { shown, more } = preview(this.text.split("\n"), this.expanded);

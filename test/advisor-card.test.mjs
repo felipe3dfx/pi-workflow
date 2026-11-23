@@ -438,6 +438,22 @@ test("below 60 terminal columns a model id too long for its row ends with … an
 		}
 });
 
+test("below 60 terminal columns a card too narrow for its +N lines tail wraps the whole instruction over its rows", async (t) => {
+	const card = await advisorCard(t);
+	densityTerminal(t, 44);
+	const lines = plain(card(done(advice, 12_000)), 20);
+	const tail = lines.findIndex((line) => /^ {2}\+\d+ lines/.test(line));
+	assert.ok(tail > 0, lines.join("\n"));
+	assert.match(
+		lines
+			.slice(tail)
+			.map((line) => line.trim())
+			.join(" "),
+		/^\+\d+ lines · tap or ctrl\+o$/,
+	);
+	for (const line of lines.slice(tail)) assert.match(line, /^ {2}\S/);
+});
+
 test("at 60 and 100 terminal columns the advisor card renders the base's bytes in every phase", async (t) => {
 	const card = await advisorCard(t);
 	const terminal = densityTerminal(t, 60);
@@ -517,4 +533,11 @@ test("with the advisor unseated a past card falls back to plain text without the
 		plain(broken)[1],
 		"   ◇ Advisor failed  3s · claude-opus-5 (high)",
 	);
+
+	seat(["child-session"]);
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(card(done(advice, 12_000)), 43).slice(1, 3), [
+		"Advisor  12s · claude-opus-5 (high)",
+		"## Risks",
+	]);
 });
