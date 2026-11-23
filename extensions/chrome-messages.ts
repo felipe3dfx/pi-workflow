@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.6.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
+// Replicates the logic of Pi 1.6.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform, Markdown.renderList and the code case of Markdown.renderToken).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
@@ -385,6 +385,20 @@ function markdownTransform(
 	};
 }
 
+const COMPACT = Symbol.for("pi-workflow:chrome-messages:compact-markdown");
+
+function compactBelowNarrow(markdown: Markdown) {
+	(markdown as unknown as Record<symbol, boolean>)[COMPACT] = true;
+	return markdown;
+}
+
+function compacted(markdown: unknown) {
+	return (
+		narrowScreen() &&
+		(markdown as Record<symbol, boolean> | undefined)?.[COMPACT] === true
+	);
+}
+
 function hasVisibleText(content: AssistantMessage["content"][number]) {
 	return (
 		(content.type === "text" && content.text.trim() !== "") ||
@@ -401,15 +415,17 @@ function expandedThinking(
 	body.addChild(header);
 	body.addChild(new Spacer(1));
 	body.addChild(
-		new Markdown(
-			blocks.join("\n\n"),
-			0,
-			0,
-			state.markdownTheme,
-			{ color: (text: string) => theme().fg("thinkingText", text) },
-			{
-				transform: markdownTransform("assistant-thinking", state),
-			},
+		compactBelowNarrow(
+			new Markdown(
+				blocks.join("\n\n"),
+				0,
+				0,
+				state.markdownTheme,
+				{ color: (text: string) => theme().fg("thinkingText", text) },
+				{
+					transform: markdownTransform("assistant-thinking", state),
+				},
+			),
 		),
 	);
 	return new Framed(
@@ -450,15 +466,17 @@ function updateContent(
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
-			const markdown = new Markdown(
-				content.text.trim(),
-				0,
-				0,
-				withLinkColor(this.markdownTheme),
-				{ color: (content: string) => theme().fg("text", content) },
-				{
-					transform: markdownTransform("assistant", this),
-				},
+			const markdown = compactBelowNarrow(
+				new Markdown(
+					content.text.trim(),
+					0,
+					0,
+					withLinkColor(this.markdownTheme),
+					{ color: (content: string) => theme().fg("text", content) },
+					{
+						transform: markdownTransform("assistant", this),
+					},
+				),
 			);
 			this.contentContainer.addChild(
 				new Framed(
@@ -776,13 +794,135 @@ const headingColors = [
 	themeVar("heading6", "mdHeading"),
 ];
 
+type MarkdownToken = { type?: string; depth?: number };
+type CodeToken = { text: string; lang?: string };
+type ListItem = { task?: boolean; checked?: boolean; tokens: MarkdownToken[] };
+type ListToken = {
+	items: ListItem[];
+	ordered?: boolean;
+	start?: number | "";
+	loose?: boolean;
+};
+type MarkdownSelf = {
+	theme: MarkdownTheme;
+	blockHighlightedCode?: Map<string, string[]>;
+	renderToken(
+		token: MarkdownToken,
+		width: number,
+		nextTokenType?: string,
+		styleContext?: unknown,
+	): string[];
+	renderList(
+		token: ListToken,
+		depth: number,
+		width: number,
+		styleContext?: unknown,
+	): string[];
+};
+
+const codeRail = "▎";
+
+function railedCode(
+	self: MarkdownSelf,
+	token: CodeToken,
+	width: number,
+	nextTokenType: string | undefined,
+) {
+	const { theme: md } = self;
+	let code: string[];
+	if (md.highlightCode) {
+		const key = `${token.lang ?? ""}\0${token.text}`;
+		code =
+			self.blockHighlightedCode?.get(key) ??
+			md.highlightCode(token.text, token.lang);
+		self.blockHighlightedCode?.set(key, code);
+	} else code = token.text.split("\n").map((line) => md.codeBlock(line));
+	const rail = `${md.codeBlockBorder(codeRail)} `;
+	const room = Math.max(1, width - visibleWidth(rail));
+	const lines = code.flatMap((line) =>
+		wrapTextWithAnsi(line, room).map((row) => rail + row),
+	);
+	if (nextTokenType && nextTokenType !== "space") lines.push("");
+	return lines;
+}
+
+function compactList(
+	this: MarkdownSelf,
+	token: ListToken,
+	depth: number,
+	width: number,
+	styleContext?: unknown,
+) {
+	// Only the assistant Markdown built here compacts, and it never asks Pi to
+	// preserve the source list markers.
+	const lines: string[] = [];
+	const indent = "  ".repeat(depth);
+	const startNumber = typeof token.start === "number" ? token.start : 1;
+	token.items.forEach((item, i) => {
+		const bullet = token.ordered ? `${startNumber + i}. ` : "- ";
+		const marker = bullet + (item.task ? `[${item.checked ? "x" : " "}] ` : "");
+		const firstPrefix = indent + this.theme.listBullet(marker);
+		const continuationPrefix = indent + " ".repeat(visibleWidth(marker));
+		const itemWidth = Math.max(1, width - visibleWidth(firstPrefix));
+		let renderedAnyLine = false;
+		for (const itemToken of item.tokens) {
+			if (itemToken.type === "list") {
+				lines.push(
+					...this.renderList(
+						itemToken as unknown as ListToken,
+						depth + 1,
+						width,
+						styleContext,
+					),
+				);
+				renderedAnyLine = true;
+				continue;
+			}
+			for (const line of this.renderToken(
+				itemToken,
+				itemWidth,
+				undefined,
+				styleContext,
+			))
+				for (const wrapped of wrapTextWithAnsi(line, itemWidth)) {
+					lines.push(
+						(renderedAnyLine ? continuationPrefix : firstPrefix) + wrapped,
+					);
+					renderedAnyLine = true;
+				}
+		}
+		if (!renderedAnyLine) lines.push(firstPrefix);
+		if (token.loose && i < token.items.length - 1) lines.push("");
+	});
+	return lines;
+}
+
+function wrapRenderList(original: PatchMethod) {
+	return function (
+		this: MarkdownSelf,
+		...args: Parameters<typeof compactList>
+	) {
+		const render = compacted(this)
+			? compactList
+			: (original as unknown as typeof compactList);
+		return render.apply(this, args);
+	} as PatchMethod;
+}
+
 function wrapRenderToken(original: PatchMethod) {
 	return function (
-		this: { theme: MarkdownTheme },
-		token: { type?: string; depth?: number },
+		this: MarkdownSelf,
+		token: MarkdownToken,
 		...rest: unknown[]
 	) {
 		const render = original as (...args: unknown[]) => unknown;
+		if (token?.type === "code" && compacted(this))
+			return railedCode(
+				this,
+				token as CodeToken,
+				rest[0] as number,
+				rest[1] as string | undefined,
+			);
 		const palette = initializedTheme();
 		const saved = this.theme;
 		if (
@@ -952,6 +1092,12 @@ const targets: PatchTarget[] = [
 		proto: Markdown.prototype,
 		name: "renderToken",
 		create: wrapRenderToken,
+		replaces: false,
+	},
+	{
+		proto: Markdown.prototype,
+		name: "renderList",
+		create: wrapRenderList,
 		replaces: false,
 	},
 	...[ToolExecutionComponent, BashExecutionComponent].flatMap((row) => [

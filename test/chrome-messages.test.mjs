@@ -6,6 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import {
 	AssistantMessageComponent,
 	BashExecutionComponent,
+	getMarkdownTheme,
 	InteractiveMode,
 	ToolExecutionComponent,
 	UserMessageComponent,
@@ -55,6 +56,7 @@ const pristine = {
 	toolMouse: ToolExecutionComponent.prototype.handleMouse,
 	bashRender: Object.hasOwn(BashExecutionComponent.prototype, "render"),
 	renderToken: Markdown.prototype.renderToken,
+	renderList: Markdown.prototype.renderList,
 };
 
 function isPristine() {
@@ -67,7 +69,8 @@ function isPristine() {
 		ToolExecutionComponent.prototype.handleMouse === pristine.toolMouse &&
 		Object.hasOwn(BashExecutionComponent.prototype, "render") ===
 			pristine.bashRender &&
-		Markdown.prototype.renderToken === pristine.renderToken
+		Markdown.prototype.renderToken === pristine.renderToken &&
+		Markdown.prototype.renderList === pristine.renderList
 	);
 }
 
@@ -115,6 +118,53 @@ function assistantComponent(hidden, label = "Thinking...", outputPad = 1) {
 
 const thought = { type: "thinking", thinking: "weigh the options" };
 const answer = { type: "text", text: "Launching six children." };
+
+const identity = (text) => text;
+const plainMarkdown = {
+	heading: identity,
+	link: identity,
+	linkUrl: identity,
+	code: identity,
+	codeBlock: identity,
+	codeBlockBorder: identity,
+	quote: identity,
+	quoteBorder: identity,
+	hr: identity,
+	listBullet: identity,
+	bold: identity,
+	italic: identity,
+	underline: identity,
+	strikethrough: identity,
+};
+const nested = [
+	"Plan:",
+	"",
+	"- one",
+	"  - two",
+	"    - three deep item that wraps across a phone width",
+	"- four",
+	"",
+	"```ts",
+	"const answer = compute(1, 2);",
+	"  return answer;",
+	"const veryLongIdentifierNameThatCannotBreakAnywhereAtAll = 1;",
+	"```",
+	"",
+	"| Key | Value |",
+	"| --- | ----- |",
+	"| a   | one   |",
+].join("\n");
+
+function markdownAnswer(markdown, hidden = true) {
+	return new AssistantMessageComponent(
+		undefined,
+		hidden,
+		markdown,
+		"Thinking...",
+		1,
+		[],
+	);
+}
 
 test("the user message is a prompt block on userMessageBg with a right-aligned timestamp that drops when the width cannot fit it", (t) => {
 	patched(t);
@@ -1368,13 +1418,185 @@ test("below 60 terminal columns every rendered line fits the width down to 3 col
 		assistant([], { stopReason: "error", errorMessage: long }),
 	);
 	const tool = toolRow();
+	const markdown = markdownAnswer(plainMarkdown);
+	markdown.updateContent(
+		assistant([
+			{ type: "thinking", thinking: nested },
+			{ type: "text", text: nested },
+		]),
+		false,
+	);
 	for (let width = 3; width <= 58; width++) {
 		terminal.columns = width + 1;
-		for (const component of [user, expanded, failed, tool])
+		for (const component of [user, expanded, failed, tool, markdown])
 			for (const line of component.render(width))
 				assert.ok(
 					visibleWidth(line) <= width,
 					`${visibleWidth(line)} > ${width}: ${JSON.stringify(line)}`,
 				);
 	}
+});
+
+const narrowNested = [
+	"",
+	"  Plan:",
+	"",
+	"  - one",
+	"    - two",
+	"      - three deep item that wraps across",
+	"        a phone width",
+	"  - four",
+	"",
+	"  ▎ const answer = compute(1, 2);",
+	"  ▎   return answer;",
+	"  ▎ const",
+	"  ▎ veryLongIdentifierNameThatCannotBreakA",
+	"  ▎ nywhereAtAll = 1;",
+	"",
+	"  ┌─────┬───────┐",
+	"  │ Key │ Value │",
+	"  ├─────┼───────┤",
+	"  │ a   │ one   │",
+	"  └─────┴───────┘",
+];
+
+const wideNested = [
+	"",
+	"   Plan:",
+	"",
+	"   - one",
+	"       - two",
+	"           - three deep item that wraps across a phone",
+	"             width",
+	"   - four",
+	"",
+	"   ```ts",
+	"     const answer = compute(1, 2);",
+	"       return answer;",
+	"     const",
+	"   veryLongIdentifierNameThatCannotBreakAnywhereAtAll =",
+	"   1;",
+	"   ```",
+	"",
+	"   ┌─────┬───────┐",
+	"   │ Key │ Value │",
+	"   ├─────┼───────┤",
+	"   │ a   │ one   │",
+	"   └─────┴───────┘",
+];
+
+function trimmed(lines) {
+	return plain(lines).map((line) => line.trimEnd());
+}
+
+test("below 60 terminal columns assistant Markdown indents each list level 2 columns and draws code blocks with a rail on every row, without fences or indent, and keeps tables, while other Markdown keeps Pi's layout", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	for (const markdown of [plainMarkdown, getMarkdownTheme()]) {
+		const component = markdownAnswer(markdown);
+		component.updateContent(
+			assistant([{ type: "text", text: nested }], { timestamp: undefined }),
+			false,
+		);
+		assert.deepEqual(trimmed(component.render(43)), narrowNested);
+	}
+	assert.deepEqual(
+		trimmed(
+			new Markdown("- one\n  - two\n\n```\nx\n```", 0, 0, plainMarkdown).render(
+				40,
+			),
+		),
+		["- one", "    - two", "", "```", "  x", "```"],
+	);
+});
+
+test("below 60 terminal columns assistant Markdown keeps ordered numbers, task boxes and loose spacing at 2 columns per level", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const component = markdownAnswer(plainMarkdown);
+	component.updateContent(
+		assistant(
+			[
+				{
+					type: "text",
+					text: "3. first\n4. second\n   - [x] done\n   - [ ] open\n\nThen:\n\n- a\n\n- b",
+				},
+			],
+			{ timestamp: undefined },
+		),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(43)), [
+		"",
+		"  3. first",
+		"  4. second",
+		"    - [x] done",
+		"    - [ ] open",
+		"",
+		"  Then:",
+		"",
+		"  - a",
+		"",
+		"  - b",
+	]);
+});
+
+test("below 60 terminal columns an open thought's Markdown indents lists 2 columns and draws code with the rail", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const component = markdownAnswer(plainMarkdown, false);
+	component.updateContent(
+		assistant(
+			[{ type: "thinking", thinking: "- one\n  - two\n\n```\nx\n```" }],
+			{ timestamp: undefined },
+		),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(43)), [
+		"",
+		"┃ ◆ Thought",
+		"┃",
+		"┃ - one",
+		"┃   - two",
+		"┃",
+		"┃ ▎ x",
+	]);
+});
+
+test("the same assistant Markdown switches between Pi's layout and the compact one each way across 60 terminal columns", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 60);
+	const component = markdownAnswer(plainMarkdown);
+	component.updateContent(
+		assistant([{ type: "text", text: nested }], { timestamp: undefined }),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(59)), wideNested);
+	terminal.columns = 59;
+	assert.deepEqual(trimmed(component.render(43)), narrowNested);
+	terminal.columns = 60;
+	assert.deepEqual(trimmed(component.render(59)), wideNested);
+	terminal.columns = 59;
+	assert.deepEqual(trimmed(component.render(43)), narrowNested);
+});
+
+test("patching the messages twice compacts assistant Markdown once and one restore gives Pi's Markdown back", (t) => {
+	densityTerminal(t, 44);
+	const component = markdownAnswer(plainMarkdown);
+	patchMessages();
+	patchMessages();
+	component.updateContent(
+		assistant([{ type: "text", text: nested }], { timestamp: undefined }),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(43)), narrowNested);
+	restoreMessages();
+	assert.ok(isPristine());
+	component.updateContent(
+		assistant([{ type: "text", text: "- one\n  - two" }], {
+			timestamp: undefined,
+		}),
+		false,
+	);
+	assert.deepEqual(trimmed(component.render(43)), ["", " - one", "     - two"]);
 });
