@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +16,7 @@ import {
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -692,10 +692,6 @@ test("below 60 terminal columns an open result card cuts its long head with … 
 	]);
 });
 
-const wideBytes = JSON.parse(
-	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
-);
-
 test("at 60 and 100 terminal columns result, question and answer cards render the base's bytes", (t) => {
 	const { card } = cards(t);
 	const terminal = densityTerminal(t, 60);
@@ -724,30 +720,25 @@ test("at 60 and 100 terminal columns result, question and answer cards render th
 			answerCard({ id, question: 2, answer: "Use Postgres." }, theme()),
 	};
 	for (const [name, make] of Object.entries(scenarios))
-		for (const [columns, widths] of [
-			[60, [59, 60]],
-			[100, [99, 100]],
-		]) {
-			terminal.columns = columns;
-			for (const width of widths)
-				assert.deepEqual(
-					make().render(width),
-					wideBytes.result[name][width],
-					`${name} ${width} in ${columns}`,
-				);
-		}
+		eachWideWidth(terminal, (width, columns) =>
+			assert.deepEqual(
+				make().render(width),
+				wideCards.result[name][width],
+				`${name} ${width} in ${columns}`,
+			),
+		);
 });
 
 test("one result card crossing 60 terminal columns in both directions gains › narrow and renders the base's bytes wide again", (t) => {
 	const { card } = cards(t);
 	const terminal = densityTerminal(t, 60);
 	const component = card({ customType: "pi-workflow-child-result", details });
-	assert.deepEqual(component.render(59), wideBytes.result.collapsed[59]);
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
 	terminal.columns = 59;
 	assert.deepEqual(
 		plain(component, 58)[1],
 		`◆ Subagent worker 5636  1m 02s${" ".repeat(26)}›`,
 	);
 	terminal.columns = 60;
-	assert.deepEqual(component.render(59), wideBytes.result.collapsed[59]);
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
 });

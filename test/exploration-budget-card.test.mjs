@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -15,7 +14,9 @@ import {
 	registerExplorationBudgetCard,
 } from "../extensions/exploration-budget-card.ts";
 import { explorationNotice } from "../extensions/exploration-budget.ts";
+import { theme } from "../extensions/visual-language.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -50,9 +51,6 @@ function card(t, message) {
 		1,
 	);
 }
-
-const theme = () =>
-	globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 const plain = (component, width = 120) =>
 	component
@@ -160,10 +158,6 @@ test("below 60 terminal columns a narrower exploration notice cuts its head with
 	]);
 });
 
-const wideBytes = JSON.parse(
-	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
-);
-
 test("at 60 and 100 terminal columns the exploration notice renders the base's bytes, collapsed and expanded, also after crossing 60 columns both ways", (t) => {
 	const terminal = densityTerminal(t, 60);
 	const opened = notice(t);
@@ -171,18 +165,13 @@ test("at 60 and 100 terminal columns the exploration notice renders the base's b
 	const scenarios = { collapsed: notice(t), expanded: opened };
 	for (const pass of ["before", "after"]) {
 		for (const [name, component] of Object.entries(scenarios))
-			for (const [columns, widths] of [
-				[60, [59, 60]],
-				[100, [99, 100]],
-			]) {
-				terminal.columns = columns;
-				for (const width of widths)
-					assert.deepEqual(
-						component.render(width),
-						wideBytes.budget[name][width],
-						`${pass} ${name} ${width} in ${columns}`,
-					);
-			}
+			eachWideWidth(terminal, (width, columns) =>
+				assert.deepEqual(
+					component.render(width),
+					wideCards.budget[name][width],
+					`${pass} ${name} ${width} in ${columns}`,
+				),
+			);
 		terminal.columns = 59;
 		assert.equal(
 			plain(scenarios.expanded, 58)[2],

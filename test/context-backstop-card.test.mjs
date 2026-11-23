@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +13,9 @@ import {
 	backstopNotice,
 	CONTEXT_BACKSTOP_TYPE,
 } from "../extensions/context-backstop.ts";
+import { theme } from "../extensions/visual-language.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -50,9 +51,6 @@ function card(t, details, content = backstopNotice(details)) {
 		1,
 	);
 }
-
-const theme = () =>
-	globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 const plain = (component, width = 140) =>
 	component
@@ -188,10 +186,6 @@ test("below 60 terminal columns an expanded backstop keeps ›, the action and t
 	for (const line of lines.slice(4)) assert.match(line, /^ {2}\S/);
 });
 
-const wideBytes = JSON.parse(
-	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
-);
-
 test("at 60 and 100 terminal columns the backstop renders the base's bytes, collapsed, with each advisor state and expanded", (t) => {
 	const terminal = densityTerminal(t, 60);
 	const scenarios = {
@@ -207,18 +201,13 @@ test("at 60 and 100 terminal columns the backstop renders the base's bytes, coll
 		},
 	};
 	for (const [name, make] of Object.entries(scenarios))
-		for (const [columns, widths] of [
-			[60, [59, 60]],
-			[100, [99, 100]],
-		]) {
-			terminal.columns = columns;
-			for (const width of widths)
-				assert.deepEqual(
-					make().render(width),
-					wideBytes.backstop[name][width],
-					`${name} ${width} in ${columns}`,
-				);
-		}
+		eachWideWidth(terminal, (width, columns) =>
+			assert.deepEqual(
+				make().render(width),
+				wideCards.backstop[name][width],
+				`${name} ${width} in ${columns}`,
+			),
+		);
 });
 
 test("one backstop opened by a click and crossing 60 terminal columns in both directions switches layout on each render and stays open", (t) => {
@@ -236,7 +225,7 @@ test("one backstop opened by a click and crossing 60 terminal columns in both di
 			screenY: 1,
 		})?.handled,
 	);
-	assert.deepEqual(component.render(59), wideBytes.backstop.expanded[59]);
+	assert.deepEqual(component.render(59), wideCards.backstop.expanded[59]);
 	terminal.columns = 59;
 	const narrow = plain(component, 58);
 	assert.deepEqual(narrow.slice(1, 4), [
@@ -246,7 +235,7 @@ test("one backstop opened by a click and crossing 60 terminal columns in both di
 	]);
 	assert.match(narrow[4], /^ {2}Context backstop:/);
 	terminal.columns = 60;
-	assert.deepEqual(component.render(59), wideBytes.backstop.expanded[59]);
+	assert.deepEqual(component.render(59), wideCards.backstop.expanded[59]);
 });
 
 test("below 60 terminal columns the notice card puts its glyph in the lane, its body at the body column and keeps the right margin", (t) => {

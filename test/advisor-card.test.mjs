@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
@@ -16,6 +15,7 @@ import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 import { parentSession, seat } from "./support/workflow-parent.mjs";
 
 const piTui = await import(
@@ -438,10 +438,6 @@ test("below 60 terminal columns a model id too long for its row ends with … an
 		}
 });
 
-const wideBytes = JSON.parse(
-	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
-);
-
 test("at 60 and 100 terminal columns the advisor card renders the base's bytes in every phase", async (t) => {
 	const card = await advisorCard(t);
 	const terminal = densityTerminal(t, 60);
@@ -455,34 +451,28 @@ test("at 60 and 100 terminal columns the advisor card renders the base's bytes i
 		failed: broken,
 	};
 	for (const [name, steps] of Object.entries(scenarios))
-		for (const [columns, widths] of [
-			[60, [59, 60]],
-			[100, [99, 100]],
-		]) {
-			terminal.columns = columns;
-			for (const width of widths) {
-				const shown = card(steps);
-				if (steps.expanded) shown.setExpanded(true);
-				assert.deepEqual(
-					shown.render(width),
-					wideBytes.advisor[name][width],
-					`${name} ${width} in ${columns}`,
-				);
-			}
-		}
+		eachWideWidth(terminal, (width, columns) => {
+			const shown = card(steps);
+			if (steps.expanded) shown.setExpanded(true);
+			assert.deepEqual(
+				shown.render(width),
+				wideCards.advisor[name][width],
+				`${name} ${width} in ${columns}`,
+			);
+		});
 });
 
 test("one advisor card crossing 60 terminal columns in both directions switches layout on each render and keeps a click's expansion", async (t) => {
 	const card = await advisorCard(t);
 	const terminal = densityTerminal(t, 60);
 	const finished = card(done(advice, 12_000));
-	assert.deepEqual(finished.render(59), wideBytes.advisor.collapsed[59]);
+	assert.deepEqual(finished.render(59), wideCards.advisor.collapsed[59]);
 	terminal.columns = 59;
 	assert.equal(plain(finished, 58).at(-1), "  +3 lines · tap or ctrl+o");
 	assert.ok(click(finished)?.handled);
 	assert.equal(plain(finished, 58).at(-1), "  Verify with a test per locale.");
 	terminal.columns = 60;
-	assert.deepEqual(finished.render(59), wideBytes.advisor.expanded[59]);
+	assert.deepEqual(finished.render(59), wideCards.advisor.expanded[59]);
 	terminal.columns = 59;
 	assert.equal(plain(finished, 58).at(-1), "  Verify with a test per locale.");
 });
