@@ -223,7 +223,7 @@ export function createModelProfiles(agentDirectory: string) {
 						done,
 						() => tui.terminal.rows,
 					),
-				pickerOverlay,
+				pickerOverlay(),
 			);
 			if (action === "save") break;
 			if (

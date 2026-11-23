@@ -15,6 +15,7 @@ import {
 	type MenuTheme,
 	modalFrame,
 	modalMetrics,
+	overlayAtOpen,
 	sectionRule,
 	selectedRow,
 } from "./chrome-menus.ts";
@@ -25,6 +26,7 @@ import {
 	type Selection,
 } from "./configure.ts";
 import { report } from "./model-profiles.ts";
+import { narrowScreen } from "./visual-language.ts";
 import {
 	type DelegationModeName,
 	delegationModes,
@@ -152,6 +154,7 @@ function createConfigGuide(
 	done: (confirmed: boolean) => void,
 ): Component {
 	const t = theme;
+	const narrow = narrowScreen();
 	const sections: { title: string; rows: Row[] }[] = [
 		{
 			title: "Capabilities",
@@ -540,9 +543,10 @@ function createConfigGuide(
 		render(width) {
 			frameWidth = width;
 			frameSpacer = true;
-			const inner = Math.max(1, modalMetrics(width).inner);
+			const metrics = modalMetrics(width, narrow);
+			const inner = Math.max(1, metrics.inner);
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
-			const titleRoom = width - 6 - (modalMetrics(width).close ? 5 : 0);
+			const titleRoom = width - 6 - (metrics.close ? 5 : 0);
 			const full = `Workflow config${pending() || installs() ? ` · ${summary()}` : ""}`;
 			const title =
 				screen === "review"
@@ -556,6 +560,7 @@ function createConfigGuide(
 				title,
 				[...(frameSpacer ? [""] : []), ...view.lines],
 				width,
+				narrow,
 			);
 		},
 		invalidate() {},
@@ -568,7 +573,7 @@ function createConfigGuide(
 				return { handled: true };
 			}
 			if (event.type !== "click" || event.button !== "left") return undefined;
-			const shut = modalMetrics(frameWidth).close;
+			const { close: shut, inset } = modalMetrics(frameWidth, narrow);
 			if (
 				event.y === 0 &&
 				shut &&
@@ -578,6 +583,8 @@ function createConfigGuide(
 				cancel();
 				return { handled: true };
 			}
+			if (narrow && (event.x < inset || event.x >= frameWidth - inset))
+				return undefined;
 			const target = targets[event.y - 1];
 			if (!target) return undefined;
 			confirmDiscard = false;
@@ -674,12 +681,12 @@ export async function guideSelection(
 			),
 		{
 			overlay: true,
-			overlayOptions: {
+			overlayOptions: overlayAtOpen({
 				anchor: "center",
 				width: "70%",
 				minWidth: 48,
 				maxHeight: "100%",
-			},
+			}),
 		},
 	);
 	return confirmed

@@ -273,7 +273,7 @@ export function createAdvisor(agentDirectory: string) {
 				);
 				return frame.component;
 			},
-			pickerOverlay,
+			pickerOverlay(),
 		);
 		if (!chosen) return;
 		writeJsonAtomically(path, { schemaVersion: 1, ...chosen });

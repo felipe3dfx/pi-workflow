@@ -471,7 +471,7 @@ export function registerChrome(
 			STATUS_WIDGET,
 			(tui, theme) => {
 				renders.add(tui);
-				setDensityTerminal(tui.terminal);
+				setDensityTerminal(tui.terminal, tui);
 				return {
 					render: (width: number) => {
 						const data = statusData();
