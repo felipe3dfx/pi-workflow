@@ -242,7 +242,7 @@ test("a running row cycles the working spinner every 133 ms while other states k
 	}
 });
 
-test("below 60 terminal columns a finished timed-out row keeps the words timed out beside ✗ and drops the model so its task stays visible, so it never reads as failed, and 60 columns or more keeps ⧖", (t) => {
+test("below 60 terminal columns a finished timed-out row keeps the words timed out beside ✗, so it never reads as failed, and 60 columns or more keeps ⧖", (t) => {
 	const finished = (state) =>
 		child({ state, startedAt: now - 12_000, endedAt: now - 2_000 });
 	const rows = (columns) =>
@@ -253,18 +253,18 @@ test("below 60 terminal columns a finished timed-out row keeps the words timed o
 		);
 	const terminal = densityTerminal(t, 43);
 	assert.deepEqual(rows(43), [
-		" ✗ worker a1b2 Fix t... grok-4.7 (high) 10s",
-		" ✗ timed out worker a1b2 Fix the fai... 10s",
+		`✗ worker a1b2 Fix the failing test${" ".repeat(6)}10s`,
+		"✗ timed out worker a1b2 Fix the failin… 10s",
 	]);
 	terminal.columns = 44;
 	assert.deepEqual(rows(44), [
-		" ✗ worker a1b2 Fix th... grok-4.7 (high) 10s",
-		" ✗ timed out worker a1b2 Fix the fail... 10s",
+		`✗ worker a1b2 Fix the failing test${" ".repeat(7)}10s`,
+		"✗ timed out worker a1b2 Fix the failing… 10s",
 	]);
 	terminal.columns = 59;
 	assert.deepEqual(rows(59), [
-		" ✗ worker a1b2 Fix the failing test     grok-4.7 (high) 10s",
-		` ✗ timed out worker a1b2 Fix the failing test${" ".repeat(11)}10s`,
+		`✗ worker a1b2 Fix the failing test${" ".repeat(22)}10s`,
+		`✗ timed out worker a1b2 Fix the failing test${" ".repeat(12)}10s`,
 	]);
 	terminal.columns = 60;
 	assert.deepEqual(rows(60), [
@@ -313,7 +313,7 @@ test("below 60 terminal columns a timed-out row shows the shared ✗ in the erro
 	const glyphs = () =>
 		renderChildrenBox(tagged, records, at, 200)
 			.slice(1)
-			.map((row) => row.split(" ")[1]);
+			.map((row) => stripVTControlCharacters(row).trimStart().split(" ")[0]);
 	const narrow = [
 		"<warning>?</warning>",
 		"<accent>⠋</accent>",
@@ -359,4 +359,45 @@ test("a running child's glyph and spinner take the cyan theme var, while finishe
 	);
 	const tagged = { ...theme, fg: (color, text) => `<${color}>${text}` };
 	assert.equal(childGlyph(tagged, child({})), "<accent>◐");
+});
+
+test("below 60 terminal columns the Subagents box starts at column 0 without the model or a selection background, keeping id, step and time under a heading hinting Alt+A", (t) => {
+	const terminal = densityTerminal(t, 44);
+	const records = [
+		child({ step: "bash npm test" }),
+		child({
+			id: "c3d4",
+			role: "explore",
+			state: "waiting",
+			step: "asks question 1",
+			startedAt: now - 62_000,
+		}),
+		child({ id: "q", state: "queued" }),
+	];
+	const box = (columns) => renderChildrenBox(theme, records, now, columns);
+	assert.ok(!box(44).some((line) => line.includes("\x1b[7m")));
+	assert.deepEqual(box(44).map(stripVTControlCharacters), [
+		"▾ Subagents 1 waiting · 1 running · 1… Alt+A",
+		`? explore c3d4 asks question 1${" ".repeat(8)}1m 02s`,
+		`⠦ worker a1b2 bash npm test${" ".repeat(14)}12s`,
+		`○ worker q Fix the failing test${" ".repeat(7)}queued`,
+	]);
+	assert.equal(
+		stripVTControlCharacters(
+			renderChildrenBox(
+				theme,
+				[child({ step: "bash npm test --test-name-pattern narrow" })],
+				now,
+				43,
+			)[1],
+		),
+		"⠦ worker a1b2 bash npm test --test-nam… 12s",
+	);
+	terminal.columns = 60;
+	const wide = box(60);
+	assert.ok(wide[1].startsWith("\x1b[7m ? explore c3d4 "));
+	assert.match(wide[0], / alt\+a view$/);
+	assert.match(wide[2], /grok-4\.7 \(high\) 12s$/);
+	terminal.columns = 59;
+	assert.equal(box(59)[2], `⠦ worker a1b2 bash npm test${" ".repeat(29)}12s`);
 });

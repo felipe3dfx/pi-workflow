@@ -915,13 +915,13 @@ test("the subagents box ends its 8-row cap with … N more · Alt+A below 60 ter
 		stripVTControlCharacters(
 			renderChildrenBox(theme, boxRecords, clock, columns).at(-1),
 		);
-	assert.equal(tail(59), " … 3 more · Alt+A");
+	assert.equal(tail(59), "… 3 more · Alt+A");
 	terminal.columns = 60;
 	assert.equal(tail(60), " … 3 more · alt+a view");
 	terminal.columns = 59;
-	assert.equal(tail(59), " … 3 more · Alt+A");
+	assert.equal(tail(59), "… 3 more · Alt+A");
 	terminal.columns = 44;
-	assert.equal(tail(43), " … 3 more · Alt+A");
+	assert.equal(tail(43), "… 3 more · Alt+A");
 });
 
 test("below 60 terminal columns empty docked lists render nothing and the Todo keeps its pagination (preserved)", (t) => {
