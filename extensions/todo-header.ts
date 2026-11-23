@@ -2,7 +2,8 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import type { Task, TaskState } from "./todo-list.ts";
+import type { Task } from "./todo-list.ts";
+import { taskStateMark } from "./visual-language.ts";
 
 export interface TodoBoxState {
 	collapsed: boolean;
@@ -20,16 +21,6 @@ const CORNER_TOP = "┌";
 const CORNER_BOTTOM = "└";
 const CORNER_BOTTOM_RIGHT = "┘";
 const SIDE = "│";
-
-const STATE_MARKS: Record<
-	TaskState,
-	{ color: Parameters<TodoTheme["fg"]>[0]; glyph: string }
-> = {
-	pending: { color: "text", glyph: "□" },
-	"in progress": { color: "accent", glyph: "◐" },
-	done: { color: "success", glyph: "✓" },
-	blocked: { color: "warning", glyph: "!" },
-};
 
 export type TodoHitAction =
 	| "collapse"
@@ -122,10 +113,10 @@ export function renderTodoBox(
 		.slice((effectivePage - 1) * capacity, effectivePage * capacity)
 		.map((task) => {
 			const text = terminalSafeLine(task.text);
-			const mark = STATE_MARKS[task.state];
+			const mark = taskStateMark(task.state).paint(theme);
 			const executor =
 				task.state === "in progress" ? executors.get(task.id) : undefined;
-			const content = `${theme.fg(mark.color, mark.glyph)} ${theme.fg(task.state === "done" ? "muted" : "text", text)}${
+			const content = `${mark} ${theme.fg(task.state === "done" ? "muted" : "text", text)}${
 				executor
 					? theme.fg(
 							"dim",

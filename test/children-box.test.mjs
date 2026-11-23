@@ -7,6 +7,7 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
 
 import { childGlyph, renderChildrenBox } from "../extensions/children-box.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -239,6 +240,108 @@ test("a running row cycles the working spinner every 133 ms while other states k
 		for (const at of [start, start + 133])
 			assert.equal(glyphAt(child({ state, endedAt: at }), at), glyph);
 	}
+});
+
+test("below 60 terminal columns a finished timed-out row keeps the words timed out beside ✗ and drops the model so its task stays visible, so it never reads as failed, and 60 columns or more keeps ⧖", (t) => {
+	const finished = (state) =>
+		child({ state, startedAt: now - 12_000, endedAt: now - 2_000 });
+	const rows = (columns) =>
+		["failed", "timed out"].map((state) =>
+			stripVTControlCharacters(
+				renderChildrenBox(theme, [finished(state)], now, columns)[1],
+			),
+		);
+	const terminal = densityTerminal(t, 43);
+	assert.deepEqual(rows(43), [
+		" ✗ worker a1b2 Fix t... grok-4.7 (high) 10s",
+		" ✗ timed out worker a1b2 Fix the fai... 10s",
+	]);
+	terminal.columns = 44;
+	assert.deepEqual(rows(44), [
+		" ✗ worker a1b2 Fix th... grok-4.7 (high) 10s",
+		" ✗ timed out worker a1b2 Fix the fail... 10s",
+	]);
+	terminal.columns = 59;
+	assert.deepEqual(rows(59), [
+		" ✗ worker a1b2 Fix the failing test     grok-4.7 (high) 10s",
+		` ✗ timed out worker a1b2 Fix the failing test${" ".repeat(11)}10s`,
+	]);
+	terminal.columns = 60;
+	assert.deepEqual(rows(60), [
+		" ✗ worker a1b2 Fix the failing test      grok-4.7 (high) 10s",
+		" ⧖ worker a1b2 Fix the failing test      grok-4.7 (high) 10s",
+	]);
+	terminal.columns = 100;
+	assert.deepEqual(rows(100), [
+		` ✗ worker a1b2 Fix the failing test${" ".repeat(46)}grok-4.7 (high) 10s`,
+		` ⧖ worker a1b2 Fix the failing test${" ".repeat(46)}grok-4.7 (high) 10s`,
+	]);
+});
+
+test("below 60 terminal columns a timed-out row shows the shared ✗ in the error tone, and 60 columns or more keeps ⧖, across the boundary both ways", (t) => {
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+	};
+	const at = now - (now % (133 * 8));
+	const records = [
+		child({ id: "run", role: "run", step: "step" }),
+		child({ id: "ask", role: "ask", state: "waiting", step: "step" }),
+		child({ id: "que", role: "que", state: "queued", step: "step" }),
+		child({
+			id: "don",
+			role: "don",
+			state: "completed",
+			endedAt: at,
+			step: "step",
+		}),
+		child({
+			id: "bad",
+			role: "bad",
+			state: "failed",
+			endedAt: at - 1,
+			step: "step",
+		}),
+		child({
+			id: "off",
+			role: "off",
+			state: "timed out",
+			endedAt: at - 2,
+			step: "step",
+		}),
+	];
+	const glyphs = () =>
+		renderChildrenBox(tagged, records, at, 200)
+			.slice(1)
+			.map((row) => row.split(" ")[1]);
+	const narrow = [
+		"<warning>?</warning>",
+		"<accent>⠋</accent>",
+		"<muted>○</muted>",
+		"<success>✓</success>",
+		"<error>✗</error>",
+		"<error>✗</error>",
+	];
+	const wide = [...narrow.slice(0, 5), "<error>⧖</error>"];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(glyphs(), narrow);
+	assert.match(
+		renderChildrenBox(theme, records, at, 43)[0],
+		/^▾ Subagents 1 waiting/,
+	);
+	terminal.columns = 60;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 44;
+	const cancelled = child({ state: "cancelled", endedAt: at });
+	assert.equal(childGlyph(tagged, cancelled), "<muted>–</muted>");
+	assert.equal(
+		childGlyph(tagged, { ...cancelled, state: "timed out" }),
+		"<error>✗</error>",
+	);
 });
 
 test("a running child's glyph and spinner take the cyan theme var, while finished glyphs keep their tokens", () => {

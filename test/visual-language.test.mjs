@@ -4,7 +4,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { themeBgVar, themeVar } from "../extensions/visual-language.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
+
+import {
+	runStateMark,
+	taskStateMark,
+	themeBgVar,
+	themeVar,
+} from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const tagged = (sourcePath, mode) => ({
 	sourcePath,
@@ -56,6 +64,35 @@ test("a theme var falls back to its token, and a background var to no band, with
 			}
 		},
 	);
+});
+
+test("below 60 terminal columns every state glyph of the shared scale is one column wide, and the Run and Task mappings share it", (t) => {
+	densityTerminal(t, 44);
+	const paint = (mark) => mark.paint(tagged(undefined, "truecolor"));
+	const run = {
+		queued: "<muted>○",
+		running: "<accent>◐",
+		waiting: "<warning>?",
+		completed: "<success>✓",
+		failed: "<error>✗",
+		"timed out": "<error>✗",
+		cancelled: "<muted>–",
+		interrupted: "<warning>⊘",
+	};
+	const task = {
+		pending: run.queued,
+		"in progress": run.running,
+		done: run.completed,
+		blocked: "<warning>!",
+	};
+	for (const [state, expected] of Object.entries(run)) {
+		assert.equal(paint(runStateMark(state)), expected, state);
+		assert.equal(visibleWidth(runStateMark(state).glyph), 1, state);
+	}
+	for (const [state, expected] of Object.entries(task)) {
+		assert.equal(paint(taskStateMark(state)), expected, state);
+		assert.equal(visibleWidth(taskStateMark(state).glyph), 1, state);
+	}
 });
 
 test("a new theme instance rereads its vars, while the same instance keeps the parsed ones", async () => {

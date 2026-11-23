@@ -942,10 +942,10 @@ test("below 60 terminal columns empty docked lists render nothing and the Todo k
 	);
 	assert.equal(paged.pageCount, 2);
 	assert.deepEqual(plain(paged.lines).slice(2, 7), [
-		`│ □ Task 9${" ".repeat(33)}│`,
-		`│ □ Task 10${" ".repeat(32)}│`,
-		`│ □ Task 11${" ".repeat(32)}│`,
-		`│ □ Task 12${" ".repeat(32)}│`,
+		`│ ○ Task 9${" ".repeat(33)}│`,
+		`│ ○ Task 10${" ".repeat(32)}│`,
+		`│ ○ Task 11${" ".repeat(32)}│`,
+		`│ ○ Task 12${" ".repeat(32)}│`,
 		"12/12 All 2/2 ‹ › Without done",
 	]);
 });

@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
+import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+
+import { childGlyph } from "../extensions/children-box.ts";
 import { renderTodoBox } from "../extensions/todo-header.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 function fakeTheme() {
 	return {
@@ -105,6 +109,57 @@ test("each Task state renders its own glyph, keeping the pending box and the don
 	assert.ok(row("working task").includes("◐ working task"));
 	assert.ok(row("finished task").includes("✓ finished task"));
 	assert.ok(row("stuck task").includes("! stuck task"));
+});
+
+test("below 60 terminal columns a Task state shows the same glyph and colour as the Subagents box, and 60 columns or more keeps □ and the accent ◐", (t) => {
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"truecolor",
+	);
+	const tasks = [
+		{ id: 1, text: "pending task", state: "pending" },
+		{ id: 2, text: "working task", state: "in progress" },
+		{ id: 3, text: "finished task", state: "done" },
+		{ id: 4, text: "stuck task", state: "blocked" },
+	];
+	const marks = () =>
+		renderTodoBox(
+			workflow,
+			tasks,
+			{ collapsed: false, showDone: true },
+			200,
+			new Map(),
+			99,
+			1,
+		)
+			.lines.slice(2, 6)
+			.map((line) => line.split(" ")[1]);
+	const cyan = "\x1b[38;2;125;207;255m";
+	const narrow = [
+		workflow.fg("muted", "○"),
+		`${cyan}◐\x1b[39m`,
+		workflow.fg("success", "✓"),
+		workflow.fg("warning", "!"),
+	];
+	const wide = [
+		workflow.fg("text", "□"),
+		workflow.fg("accent", "◐"),
+		...narrow.slice(2),
+	];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(marks(), narrow);
+	const child = (state) => childGlyph(workflow, { state });
+	assert.deepEqual(narrow.slice(0, 3), [
+		child("queued"),
+		child("running"),
+		child("completed"),
+	]);
+	terminal.columns = 60;
+	assert.deepEqual(marks(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(marks(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(marks(), wide);
 });
 
 test("hiding done tasks removes only done rows", () => {
