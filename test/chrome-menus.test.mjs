@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
 	ExtensionInputComponent,
@@ -33,11 +34,15 @@ import {
 	sectionRule,
 } from "../extensions/chrome-menus.ts";
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 initTheme("dark", false);
 const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 const plain = (lines) => lines.map((line) => stripTerminalSequences(line));
 const selectedBg = theme.bg("selectedBg", "\u0000").split("\u0000")[0];
+const wideMenuBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-menus.json", import.meta.url), "utf8"),
+);
 
 function patched(t) {
 	patchMenus();
@@ -721,4 +726,112 @@ test("hint keys use one casing", () => {
 	assert.equal(displayKey("enter"), "Enter");
 	assert.equal(displayKey("escape/ctrl+c"), "Esc/Ctrl+C");
 	assert.equal(displayKey("Ctrl+S"), "Ctrl+S");
+});
+
+// The menus a wide terminal must keep rendering as the base did (D-open-1).
+function wideMenus(columns) {
+	const surfaces = {
+		auth: authSelector().render(columns),
+		provider: providerSelector().render(columns),
+		input: inputDialog().render(columns),
+		selectList: selectList().render(columns),
+	};
+	const main = settingsSelector();
+	surfaces.settings = main.selector.render(columns);
+	main.list.selectItem("theme");
+	main.list.activateItem();
+	surfaces.themeSubmenu = main.selector.render(columns);
+	const stepped = settingsSelector();
+	stepped.list.selectItem("model-thinking");
+	stepped.list.activateItem();
+	surfaces.steppedSubmenu = stepped.selector.render(columns);
+	const nested = settingsSelector();
+	nested.list.selectItem("auto-theme");
+	nested.list.activateItem();
+	surfaces.automaticTheme = nested.selector.render(columns);
+	nested.list.handleInput("\r");
+	surfaces.lightTheme = nested.selector.render(columns);
+	return surfaces;
+}
+
+const trimmed = (lines) => plain(lines).map((line) => line.trimEnd());
+const rule = (columns) => ` ${"─".repeat(columns - 2)}`;
+
+test("below 60 terminal columns a Pi selector reads its hints Key action joined by · from the left, and marks only the selected row with ▸", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	assert.deepEqual(trimmed(authSelector().render(44)), [
+		rule(44),
+		"",
+		"  Select authentication method:",
+		"",
+		"  ▸ Sign in with an account",
+		"    Sign in with an API key",
+		"",
+		"  ↑/↓ navigate · Enter select",
+		"  Esc/Ctrl+C cancel",
+		"",
+		rule(44),
+	]);
+	const input = inputDialog().render(44);
+	assert.equal(trimmed(input)[6], "  Enter submit · Esc/Ctrl+C cancel");
+	assert.ok(
+		input[6].includes(
+			`${strong("Enter")} ${theme.fg("dim", "submit")}${theme.fg("dim", " · ")}`,
+		),
+	);
+});
+
+test("a Pi selector switches its hints and marker on the next render as the terminal crosses 60 columns either way", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 59);
+	const selector = authSelector();
+	const narrow = [
+		"  ▸ Sign in with an account",
+		"    Sign in with an API key",
+		"",
+		"  ↑/↓ navigate · Enter select · Esc/Ctrl+C cancel",
+	];
+	assert.deepEqual(trimmed(selector.render(59)).slice(4, 8), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(selector.render(60), wideMenuBytes[60].auth);
+	terminal.columns = 59;
+	assert.deepEqual(trimmed(selector.render(59)).slice(4, 8), narrow);
+});
+
+test("below 60 terminal columns a settings submenu reads its hints with ·, and a SelectList ends a cut label or description with …", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 44);
+	const submenu = settingsSelector();
+	submenu.list.selectItem("theme");
+	submenu.list.activateItem();
+	const lines = trimmed(submenu.selector.render(44));
+	assert.equal(
+		lines.at(-2),
+		`│ ${"  Enter select · Esc go back".padEnd(40)} │`,
+	);
+	terminal.columns = 48;
+	const wider = settingsSelector();
+	wider.list.selectItem("theme");
+	wider.list.activateItem();
+	assert.equal(
+		trimmed(wider.selector.render(48))[3],
+		`│ ${" ○ automatic    Use separate themes for l…".padEnd(44)} │`,
+	);
+	terminal.columns = 44;
+	const list = new SelectList(
+		[{ value: "long", label: "anthropic/claude-opus-5-5-extended" }],
+		2,
+		getSelectListTheme(),
+	);
+	assert.equal(trimmed(list.render(30))[0], " ○ anthropic/claude-opus-5-…");
+});
+
+test("at 60 and 100 terminal columns Pi selectors, SelectList and settings with their submenus render the base's bytes", (t) => {
+	patched(t);
+	const terminal = densityTerminal(t, 60);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(wideMenus(columns), wideMenuBytes[columns]);
+	}
 });

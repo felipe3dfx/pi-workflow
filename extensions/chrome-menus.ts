@@ -53,7 +53,9 @@ export const NATIVE: unique symbol = Symbol.for(
 const RESET = "\x1b[0m";
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
-const hintGap = "  |  ";
+const wideHintGap = "  |  ";
+// Below 60 columns hints read `Key action · Key action` from the left (NS-12).
+const narrowHintGap = " · ";
 const close = " [×] ";
 
 type SelectListState = {
@@ -150,7 +152,11 @@ export function menuRow(
 	const gap = " ".repeat(
 		Math.max(0, room - visibleWidth(shownLabel) - valueWidth),
 	);
-	const mark = selected ? t.bold(t.fg("text", "▸ ")) : t.fg("dim", "▸ ");
+	const mark = selected
+		? t.bold(t.fg("text", "▸ "))
+		: narrow
+			? "  "
+			: t.fg("dim", "▸ ");
 	const text = selected
 		? t.bold(t.fg("text", shownLabel))
 		: t.fg("text", shownLabel);
@@ -173,19 +179,22 @@ export function hintRows(
 	t: MenuTheme,
 	hints: Hint[],
 	width: number,
-	center = true,
+	layout: { center?: boolean; narrow?: boolean } = {},
 ) {
+	const { narrow = false } = layout;
+	const center = !narrow && (layout.center ?? true);
+	const gap = narrow ? narrowHintGap : wideHintGap;
 	const rows: number[][] = [[]];
 	let used = 0;
 	hints.forEach(([key, action], index) => {
 		const size = visibleWidth(`${key} ${action}`);
 		const row = rows[rows.length - 1];
-		if (row.length > 0 && used + hintGap.length + size > width) {
+		if (row.length > 0 && used + gap.length + size > width) {
 			rows.push([index]);
 			used = size;
 		} else {
 			row.push(index);
-			used += (row.length > 1 ? hintGap.length : 0) + size;
+			used += (row.length > 1 ? gap.length : 0) + size;
 		}
 	});
 	const spans: HintSpan[] = [];
@@ -195,21 +204,21 @@ export function hintRows(
 				(sum, index) => sum + visibleWidth(hints[index].join(" ")),
 				0,
 			) +
-			hintGap.length * Math.max(0, row.length - 1);
+			gap.length * Math.max(0, row.length - 1);
 		let x = center ? Math.max(0, Math.floor((width - total) / 2)) : 0;
 		let line = " ".repeat(x);
 		row.forEach((index, i) => {
 			const [key, action] = hints[index];
 			if (i > 0) {
-				line += t.fg("dim", hintGap);
-				x += hintGap.length;
+				line += t.fg("dim", gap);
+				x += gap.length;
 			}
 			const size = visibleWidth(`${key} ${action}`);
 			spans.push({ index, row: y, start: x, end: x + size });
 			line += `${t.bold(t.fg("text", key))} ${t.fg("dim", action)}`;
 			x += size;
 		});
-		return fit(line, width);
+		return fit(line, width, narrow ? "…" : "");
 	});
 	return { lines, spans };
 }
@@ -382,6 +391,26 @@ function wrapRenderItem(original: PatchMethod) {
 			isSelected ? t.bold(t.fg("text", text)) : t.fg("text", text);
 		const row = (line: string) =>
 			isSelected ? selectedRow(t, line, width) : fit(line, width);
+		const cut = menuNarrow() ? "…" : "";
+		// Pi cuts a label without an ellipsis; below 60 columns it ends with … (NS-13).
+		const primary = (maxWidth: number, columnWidth: number) => {
+			const fitted = this.truncatePrimary(
+				shown,
+				isSelected,
+				maxWidth,
+				columnWidth,
+			);
+			if (!cut) return fitted;
+			const whole = this.truncatePrimary(
+				shown,
+				isSelected,
+				Number.MAX_SAFE_INTEGER,
+				columnWidth,
+			);
+			return visibleWidth(whole) > maxWidth
+				? truncateToWidth(whole, maxWidth, cut)
+				: fitted;
+		};
 		if (descriptionSingleLine && width > 40) {
 			const effectivePrimaryColumnWidth = Math.max(
 				1,
@@ -391,9 +420,7 @@ function wrapRenderItem(original: PatchMethod) {
 				1,
 				effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP,
 			);
-			const truncatedValue = this.truncatePrimary(
-				shown,
-				isSelected,
+			const truncatedValue = primary(
 				maxPrimaryWidth,
 				effectivePrimaryColumnWidth,
 			);
@@ -408,7 +435,7 @@ function wrapRenderItem(original: PatchMethod) {
 				const truncatedDesc = truncateToWidth(
 					descriptionSingleLine,
 					remainingWidth,
-					"",
+					cut,
 				);
 				return row(
 					`${mark}${label(truncatedValue)}${spacing}${t.fg("dim", truncatedDesc)}`,
@@ -416,13 +443,7 @@ function wrapRenderItem(original: PatchMethod) {
 			}
 		}
 		const maxWidth = Math.max(0, width - prefixWidth - 2);
-		const truncatedValue = this.truncatePrimary(
-			shown,
-			isSelected,
-			maxWidth,
-			maxWidth,
-		);
-		return row(`${mark}${label(truncatedValue)}`);
+		return row(`${mark}${label(primary(maxWidth, maxWidth))}`);
 	} as PatchMethod;
 }
 
@@ -452,7 +473,10 @@ function settingsHints(state: SettingsListState, width: number) {
 		["Enter/Space", "change"],
 		["Esc", "cancel"],
 	];
-	const { lines } = hintRows(theme(), hints, Math.max(1, width - 2), false);
+	const { lines } = hintRows(theme(), hints, Math.max(1, width - 2), {
+		center: false,
+		narrow: menuNarrow(),
+	});
 	return ["", ...lines.map((line) => fit(`  ${line}`, width))];
 }
 
@@ -465,6 +489,12 @@ type BodyRows = { count: number; selected: number; hints: number };
 let settingsPass:
 	| { narrow: boolean; list?: SettingsListState; rows?: BodyRows }
 	| undefined;
+
+// A menu inside a settings modal keeps the density the modal opened with; any
+// other menu follows the terminal on each render (NS-02, NS-09).
+function menuNarrow() {
+	return settingsPass?.narrow ?? narrowScreen();
+}
 
 function renderMainList(this: SettingsListState, width: number) {
 	const t = theme();
@@ -561,11 +591,11 @@ function restyleLabel(t: MenuTheme, text: string) {
 	return `${rest === text ? "" : t.fg("text", "● ")}${plain.trim() ? t.fg("text", plain) + rest.slice(plain.length) : rest}`;
 }
 
-function restyleRow(t: MenuTheme, text: string) {
+function restyleRow(t: MenuTheme, text: string, narrow: boolean) {
 	const pi = t.fg("accent", "→ ");
 	if (!text.startsWith(pi))
 		return text.startsWith("  ")
-			? t.fg("dim", "▸ ") + restyleLabel(t, text.slice(2))
+			? (narrow ? "  " : t.fg("dim", "▸ ")) + restyleLabel(t, text.slice(2))
 			: text;
 	const [open, close] = t.fg("accent", "\u0000").split("\u0000");
 	let rest = text.slice(pi.length);
@@ -584,7 +614,7 @@ function restyleRow(t: MenuTheme, text: string) {
 
 type Dress = { search?: boolean; pane?: boolean; notices?: boolean };
 
-function isText(child: unknown): child is Styled {
+function isText(child: unknown): child is Padded {
 	const node = child as Partial<Padded> | undefined;
 	return typeof node?.text === "string" && typeof node.paddingX === "number";
 }
@@ -624,9 +654,18 @@ function hidePane(t: MenuTheme, children: unknown[], swaps: Swap[]) {
 	});
 }
 
-function restyle(t: MenuTheme, node: unknown, swaps: Swap[], dress: Dress) {
+// The density and width a selector renders at.
+type Pass = { narrow: boolean; width: number };
+
+function restyle(
+	t: MenuTheme,
+	node: unknown,
+	swaps: Swap[],
+	dress: Dress,
+	pass: Pass,
+) {
 	const active = (node as { activeComponent?: unknown }).activeComponent;
-	if (active) restyle(t, active, swaps, dress);
+	if (active) restyle(t, active, swaps, dress, pass);
 	const children = (node as { children?: unknown[] }).children;
 	if (!Array.isArray(children)) return;
 	if (dress.pane) hidePane(t, children, swaps);
@@ -636,14 +675,15 @@ function restyle(t: MenuTheme, node: unknown, swaps: Swap[], dress: Dress) {
 	);
 	for (const child of texts) {
 		const text =
+			(pass.narrow ? wrappedHints(t, child, pass.width) : undefined) ??
 			(dress.notices ? quiet(t, child.text) : undefined) ??
 			restyleTitle(t, child.text) ??
-			(listed ? restyleRow(t, child.text) : child.text);
+			(listed ? restyleRow(t, child.text, pass.narrow) : child.text);
 		if (text !== child.text) swap(swaps, child, "text", text);
 	}
 	for (const child of children) {
 		if (dress.search && child instanceof Input) dressSearch(child, swaps);
-		else restyle(t, child, swaps, dress);
+		else restyle(t, child, swaps, dress, pass);
 	}
 }
 
@@ -692,15 +732,30 @@ export function displayKey(key: string) {
 		.join("/");
 }
 
-function restyleHints(line: string, width: number) {
-	const body = line.trim();
-	const found = body && piHints(theme(), body);
-	if (!found) return line;
+// Pi's hints in `text` as this menu's hint rows, keeping the text's indent.
+function ownHints(t: MenuTheme, text: string, width: number, narrow: boolean) {
+	const body = text.trim();
+	const found = body && piHints(t, body);
+	if (!found) return undefined;
 	const hints = found.map(([key, action]): Hint => [displayKey(key), action]);
-	const shown = stripTerminalSequences(line);
+	const shown = stripTerminalSequences(text);
 	const lead = shown.length - shown.trimStart().length;
-	const { lines } = hintRows(theme(), hints, Math.max(1, width - lead), false);
-	return lines.length === 1 ? fit(" ".repeat(lead) + lines[0], width) : line;
+	const { lines } = hintRows(t, hints, Math.max(1, width - lead), {
+		center: false,
+		narrow,
+	});
+	return lines.map((line) => " ".repeat(lead) + line);
+}
+
+// Below 60 columns a hint text Pi would wrap mid-hint breaks between hints
+// instead, so each row reads `Key action · Key action` (NS-12, NS-16).
+function wrappedHints(t: MenuTheme, child: Padded, width: number) {
+	return ownHints(t, child.text, width - child.paddingX * 2, true)?.join("\n");
+}
+
+function restyleHints(line: string, width: number, narrow: boolean) {
+	const lines = ownHints(theme(), line, width, narrow);
+	return lines?.length === 1 ? fit(lines[0], width) : line;
 }
 
 function swapMarker(line: string, width: number) {
@@ -732,14 +787,16 @@ function wrapSelectorRender(
 			);
 		const edge = margin ? marginFor(width) : 0;
 		const inner = width - edge * 2;
+		const narrow = menuNarrow();
 		const swaps: Swap[] = [];
 		try {
-			restyle(theme(), node, swaps, dress);
+			restyle(theme(), node, swaps, dress, { narrow, width: inner });
 			return (original as (width: number) => readonly string[])
 				.call(this, inner)
 				.map(
 					(line) =>
-						" ".repeat(edge) + restyleHints(swapMarker(line, inner), inner),
+						" ".repeat(edge) +
+						restyleHints(swapMarker(line, inner), inner, narrow),
 				);
 		} finally {
 			unswap(swaps);

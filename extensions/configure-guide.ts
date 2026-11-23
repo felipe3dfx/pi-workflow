@@ -308,6 +308,11 @@ function createConfigGuide(
 		return { copy, warning };
 	}
 
+	// Centred wide; `Key action · Key action` from the left below 60 columns (NS-33).
+	function hintLines(hints: Hint[], inner: number) {
+		return hintRows(t, hints, inner, { narrow }).lines;
+	}
+
 	function editHints(): Hint[] {
 		const hints: Hint[] = [["↑/↓", "move"]];
 		if (focus === actionIndex) hints.push(["Enter", "review"]);
@@ -352,7 +357,7 @@ function createConfigGuide(
 					).map((line) => t.fg("warning", line)),
 				]
 			: [];
-		let tail = ["", ...hintRows(t, editHints(), inner).lines];
+		let tail = ["", ...hintLines(editHints(), inner)];
 		let spare =
 			terminalRows() - 3 - warning.length - notice.length - tail.length;
 		let shownDetail = detail;
@@ -360,11 +365,7 @@ function createConfigGuide(
 		if (detail.length > spare - 1 && described.copy.length <= spare - 1) {
 			shownDetail = detail.slice(1);
 		} else if (described.copy.length > spare - 1) {
-			tail = hintRows(
-				t,
-				[...editHints(), ["PgUp/PgDn", "description"]],
-				inner,
-			).lines;
+			tail = hintLines([...editHints(), ["PgUp/PgDn", "description"]], inner);
 			spare = terminalRows() - 3 - warning.length - notice.length - tail.length;
 			if (spare < 3) {
 				frameSpacer = false;
@@ -383,11 +384,10 @@ function createConfigGuide(
 			);
 			const indicator = `${descriptionOffset > 0 ? "↑" : ""}${descriptionOffset < descriptionMax ? "↓" : ""} more`;
 			if (foldIndicator) {
-				tail = hintRows(
-					t,
+				tail = hintLines(
 					[...editHints(), ["PgUp/PgDn", `description ${indicator}`]],
 					inner,
-				).lines;
+				);
 			}
 			shownDetail = [
 				...described.copy
@@ -483,7 +483,7 @@ function createConfigGuide(
 			inner,
 		);
 		const fits = (hints: Hint[]) =>
-			terminalRows() - 6 - hintRows(t, hints, inner).lines.length;
+			terminalRows() - 6 - hintLines(hints, inner).length;
 		const scrolls =
 			all.length >
 			fits([
@@ -512,7 +512,7 @@ function createConfigGuide(
 			"",
 			applyLine,
 			"",
-			...hintRows(t, hints, inner).lines,
+			...hintLines(hints, inner),
 		];
 		return {
 			lines,

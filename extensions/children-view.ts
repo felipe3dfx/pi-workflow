@@ -1882,6 +1882,7 @@ function createChildrenView(
 				theme,
 				keys.map(([hint]) => hint),
 				inner,
+				{ narrow },
 			);
 			const shownHints = Math.min(hints.lines.length, Math.max(0, height - 3));
 			const body = Math.max(0, height - 3 - shownHints);
