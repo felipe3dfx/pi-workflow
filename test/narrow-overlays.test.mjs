@@ -16,6 +16,7 @@ import { createChatViewport } from "../node_modules/@earendil-works/pi-coding-ag
 import { createAdvisor } from "../extensions/advisor.ts";
 import { renderChildrenBox } from "../extensions/children-box.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
+import { createFooterHints, registerChrome } from "../extensions/chrome.ts";
 import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { fixHeader } from "../extensions/fixed-header.ts";
@@ -732,6 +733,42 @@ function widgets(children, tasks) {
 	return above;
 }
 
+// The session chrome's status widget, built by the factory the chrome hands Pi
+// on session_start, which binds the density terminal and its host.
+async function statusWidget(t, screen) {
+	const handlers = [];
+	const ui = { theme };
+	for (const name of [
+		"setWorkingVisible",
+		"setWorkingIndicator",
+		"setWorkingMessage",
+		"setHeader",
+		"setFooter",
+		"setEditorComponent",
+	])
+		ui[name] = () => {};
+	ui.setWidget = (_key, factory) => (ui.widget = factory);
+	const ctx = {
+		mode: "tui",
+		cwd: process.cwd(),
+		getContextUsage: () => undefined,
+		sessionManager: { buildContextEntries: () => [], getEntries: () => [] },
+		ui,
+	};
+	registerChrome(
+		{ on: (...entry) => handlers.push(entry), registerShortcut() {} },
+		createFooterHints(),
+		() => () => {},
+	);
+	const emit = async (name, event) => {
+		for (const [on, handler] of handlers)
+			if (on === name) await handler(event, ctx);
+	};
+	await emit("session_start", {});
+	t.after(() => emit("session_shutdown", { reason: "quit" }));
+	return ui.widget(screen.tui, theme);
+}
+
 test("in a narrow fullscreen dock crowded by running children and a Todo, tall settings keep their frame, selected row and hints in view while Pi shrinks the widgets", async (t) => {
 	patchMenus();
 	t.after(restoreMenus);
@@ -741,7 +778,10 @@ test("in a narrow fullscreen dock crowded by running children and a Todo, tall s
 		const { selector, list } = settingsSelector({
 			description: longDescription,
 		});
-		narrowDock(t, screen, selector, widgets(children, 1));
+		const above = widgets(children, 1);
+		// Pi binds the layout host through the chrome's status widget.
+		if (children === 4) above.addChild(await statusWidget(t, screen));
+		narrowDock(t, screen, selector, above);
 		for (const selected of [0, 5]) {
 			for (let i = 0; i < selected; i++) list.handleInput("\x1b[B");
 			const lines = await screen.frame();
