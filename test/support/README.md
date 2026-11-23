@@ -25,6 +25,7 @@
 | `selection.mjs` | `selectionWith` | Build a stored selection. |
 | `sentence.mjs` | `assertSentence` | Assert that one sentence of a text matches every given pattern. |
 | `signed-checkpoint.mjs` | `withCheckpoint`, `repository` | Temporary signed repositories/worktrees with isolated HOME/XDG and ephemeral SSH fixture key. |
+| `wide-cards.mjs` | `wideCards`, `eachWideWidth` | The base's raw wide card bytes from `test/fixtures/wide-cards.json`, keyed by card, scenario and render width; `eachWideWidth(terminal, check)` sets the density terminal to 60 and then 100 columns and calls `check(width, columns)` with each captured render width (59, 60, 99, 100). |
 | `workflow-parent.mjs` | `seat`, `parentSession`, `gitRepository`, `realParent` | Seat a capability selection; a fake parent of the workflow extension (`fire`, which runs an event's handlers in order and returns the last result a handler gave, registered `tools` and `commands`, `sent` messages); an empty Git repository; a real Pi parent session on a faux model with fake children, optional extra `extensionFactories`, in-memory `settings`, and `models: true` to load the agent directory's `models.json` (as `modelEndpoint` writes it); a faux response may be a function of the request context; returns `session`, `requests`, `children` and `worktree`. |
 
 Check this table before writing a helper or reading a large test file to find one.

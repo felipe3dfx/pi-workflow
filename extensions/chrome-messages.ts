@@ -1,4 +1,4 @@
-// Replicates the logic of Pi 1.6.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform).
+// Replicates the logic of Pi 1.6.0 (AssistantMessageComponent.updateContent, UserMessageComponent.rebuild, createMarkdownTransform, Markdown.renderList and the code case of Markdown.renderToken).
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
@@ -468,6 +468,27 @@ function markdownTransform(
 	};
 }
 
+const COMPACT = Symbol.for("pi-workflow:chrome-messages:compact-markdown");
+
+// The mark keeps the density of the last render, which Pi's render cache
+// does not key on.
+// tableShrink is the width the compact list prefixes save over Pi's around
+// the item token being rendered; only its tables give it back.
+type CompactMark = { narrow?: boolean; tableShrink?: number };
+
+function compactMark(markdown: unknown) {
+	return (markdown as Record<symbol, CompactMark> | undefined)?.[COMPACT];
+}
+
+function markCompactMarkdown(markdown: Markdown) {
+	(markdown as unknown as Record<symbol, CompactMark>)[COMPACT] = {};
+	return markdown;
+}
+
+function shouldCompactMarkdown(markdown: unknown) {
+	return narrowScreen() && compactMark(markdown) !== undefined;
+}
+
 function hasVisibleText(content: AssistantMessage["content"][number]) {
 	return (
 		(content.type === "text" && content.text.trim() !== "") ||
@@ -484,15 +505,17 @@ function expandedThinking(
 	body.addChild(header);
 	body.addChild(new Spacer(1));
 	body.addChild(
-		new Markdown(
-			blocks.join("\n\n"),
-			0,
-			0,
-			state.markdownTheme,
-			{ color: (text: string) => theme().fg("thinkingText", text) },
-			{
-				transform: markdownTransform("assistant-thinking", state),
-			},
+		markCompactMarkdown(
+			new Markdown(
+				blocks.join("\n\n"),
+				0,
+				0,
+				state.markdownTheme,
+				{ color: (text: string) => theme().fg("thinkingText", text) },
+				{
+					transform: markdownTransform("assistant-thinking", state),
+				},
+			),
 		),
 	);
 	return new Framed(
@@ -534,15 +557,17 @@ function updateContent(
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
-			const markdown = new Markdown(
-				content.text.trim(),
-				0,
-				0,
-				withLinkColor(this.markdownTheme),
-				{ color: (content: string) => theme().fg("text", content) },
-				{
-					transform: markdownTransform("assistant", this),
-				},
+			const markdown = markCompactMarkdown(
+				new Markdown(
+					content.text.trim(),
+					0,
+					0,
+					withLinkColor(this.markdownTheme),
+					{ color: (content: string) => theme().fg("text", content) },
+					{
+						transform: markdownTransform("assistant", this),
+					},
+				),
 			);
 			const block = new Framed(
 				markdown,
@@ -870,13 +895,185 @@ const headingColors = [
 	themeVar("heading6", "mdHeading"),
 ];
 
+type MarkdownToken = { type?: string; depth?: number };
+type CodeToken = { text: string; lang?: string };
+type ListItem = { task?: boolean; checked?: boolean; tokens: MarkdownToken[] };
+type ListToken = {
+	items: ListItem[];
+	ordered?: boolean;
+	start?: number | "";
+	loose?: boolean;
+};
+type MarkdownSelf = {
+	theme: MarkdownTheme;
+	renderToken(
+		token: MarkdownToken,
+		width: number,
+		nextTokenType?: string,
+		styleContext?: unknown,
+	): string[];
+	renderList(
+		token: ListToken,
+		depth: number,
+		width: number,
+		styleContext?: unknown,
+	): string[];
+};
+
+const codeRail = "▎";
+
+// Pi draws the code rows, highlighted or not, without indent and without a
+// successor; only its two fence rows are dropped.
+function railedCode(
+	self: MarkdownSelf,
+	render: (...args: unknown[]) => unknown,
+	token: CodeToken,
+	width: number,
+	nextTokenType: string | undefined,
+	styleContext: unknown,
+) {
+	const saved = self.theme;
+	let code: string[];
+	try {
+		self.theme = { ...saved, codeBlockIndent: "" };
+		code = (
+			render.call(self, token, width, undefined, styleContext) as string[]
+		).slice(1, -1);
+	} finally {
+		self.theme = saved;
+	}
+	// Each code line drops the rail's space, then the rail, rather than leave
+	// a double-width character on a row wider than the room beside it.
+	const rails = [
+		`${saved.codeBlockBorder(codeRail)} `,
+		saved.codeBlockBorder(codeRail),
+	];
+	const lines = code.flatMap((line) => {
+		for (const rail of rails) {
+			const room = width - visibleWidth(rail);
+			if (room < 1) continue;
+			const rows = wrapTextWithAnsi(line, room);
+			if (rows.every((row) => visibleWidth(row) <= room))
+				return rows.map((row) => rail + row);
+		}
+		return wrapTextWithAnsi(line, Math.max(1, width));
+	});
+	if (nextTokenType && nextTokenType !== "space") lines.push("");
+	return lines;
+}
+
+function compactList(
+	this: MarkdownSelf,
+	token: ListToken,
+	depth: number,
+	width: number,
+	styleContext?: unknown,
+) {
+	// Only the assistant Markdown built here compacts, and it never asks Pi to
+	// preserve the source list markers.
+	const lines: string[] = [];
+	const mark = compactMark(this) as CompactMark;
+	const outerShrink = mark.tableShrink ?? 0;
+	const indent = "  ".repeat(depth);
+	const startNumber = typeof token.start === "number" ? token.start : 1;
+	token.items.forEach((item, i) => {
+		const bullet = token.ordered ? `${startNumber + i}. ` : "- ";
+		const marker = bullet + (item.task ? `[${item.checked ? "x" : " "}] ` : "");
+		const firstPrefix = indent + this.theme.listBullet(marker);
+		const continuationPrefix = indent + " ".repeat(visibleWidth(marker));
+		const itemWidth = Math.max(1, width - visibleWidth(firstPrefix));
+		let renderedAnyLine = false;
+		for (const itemToken of item.tokens) {
+			if (itemToken.type === "list") {
+				lines.push(
+					...this.renderList(
+						itemToken as unknown as ListToken,
+						depth + 1,
+						width,
+						styleContext,
+					),
+				);
+				renderedAnyLine = true;
+				continue;
+			}
+			// Tables, quoted or not, keep the width Pi gives them at 4 columns
+			// per level.
+			let rendered: string[];
+			mark.tableShrink = outerShrink + 2 * depth;
+			try {
+				rendered = this.renderToken(
+					itemToken,
+					itemWidth,
+					undefined,
+					styleContext,
+				);
+			} finally {
+				mark.tableShrink = outerShrink;
+			}
+			for (const line of rendered)
+				for (const wrapped of wrapTextWithAnsi(line, itemWidth)) {
+					lines.push(
+						(renderedAnyLine ? continuationPrefix : firstPrefix) + wrapped,
+					);
+					renderedAnyLine = true;
+				}
+		}
+		if (!renderedAnyLine) lines.push(firstPrefix);
+		if (token.loose && i < token.items.length - 1) lines.push("");
+	});
+	return lines;
+}
+
+function wrapMarkdownRender(original: PatchMethod) {
+	const render = original as (this: Markdown, width: number) => string[];
+	return function (this: Markdown, width: number) {
+		const mark = compactMark(this);
+		if (mark) {
+			const narrow = narrowScreen();
+			if (mark.narrow !== undefined && mark.narrow !== narrow)
+				this.invalidate();
+			mark.narrow = narrow;
+		}
+		return render.call(this, width);
+	} as PatchMethod;
+}
+
+function wrapRenderList(original: PatchMethod) {
+	return function (
+		this: MarkdownSelf,
+		...args: Parameters<typeof compactList>
+	) {
+		const render = shouldCompactMarkdown(this)
+			? compactList
+			: (original as unknown as typeof compactList);
+		return render.apply(this, args);
+	} as PatchMethod;
+}
+
 function wrapRenderToken(original: PatchMethod) {
 	return function (
-		this: { theme: MarkdownTheme },
-		token: { type?: string; depth?: number },
+		this: MarkdownSelf,
+		token: MarkdownToken,
 		...rest: unknown[]
 	) {
 		const render = original as (...args: unknown[]) => unknown;
+		if (token?.type === "code" && shouldCompactMarkdown(this))
+			return railedCode(
+				this,
+				render,
+				token as CodeToken,
+				rest[0] as number,
+				rest[1] as string | undefined,
+				rest[2],
+			);
+		const shrink = compactMark(this)?.tableShrink;
+		if (token?.type === "table" && shrink && shouldCompactMarkdown(this))
+			return render.call(
+				this,
+				token,
+				Math.max(1, (rest[0] as number) - shrink),
+				...rest.slice(1),
+			);
 		const palette = initializedTheme();
 		const saved = this.theme;
 		if (
@@ -1046,6 +1243,18 @@ const targets: PatchTarget[] = [
 		proto: Markdown.prototype,
 		name: "renderToken",
 		create: wrapRenderToken,
+		replaces: false,
+	},
+	{
+		proto: Markdown.prototype,
+		name: "render",
+		create: wrapMarkdownRender,
+		replaces: false,
+	},
+	{
+		proto: Markdown.prototype,
+		name: "renderList",
+		create: wrapRenderList,
 		replaces: false,
 	},
 	...[ToolExecutionComponent, BashExecutionComponent].flatMap((row) => [

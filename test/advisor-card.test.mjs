@@ -14,6 +14,8 @@ import {
 import { compactToolRenderers } from "../extensions/compact-tools.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { writeAdvisorModel } from "./support/advisor-model.mjs";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 import { parentSession, seat } from "./support/workflow-parent.mjs";
 
 const piTui = await import(
@@ -370,6 +372,127 @@ test("every card line fits its width, and hostile model, thinking, and advice ca
 	check();
 });
 
+const narrowHead = `◇ Advisor 12s${" ".repeat(28)}›`;
+
+test("below 60 terminal columns a finished consultation shows Advisor 12s ›, the model on its own dim row and the +N lines tail", async (t) => {
+	const card = await advisorCard(t);
+	densityTerminal(t, 44);
+	const finished = card(done(advice, 12_000));
+	assert.deepEqual(plain(finished, 43), [
+		"",
+		narrowHead,
+		"  claude-opus-5 (high)",
+		"  Risks",
+		"",
+		"  - The cache key ignores the locale.",
+		"  +3 lines · tap or ctrl+o",
+	]);
+	const raw = finished.render(43);
+	assert.ok(raw[1].endsWith(theme().fg("dim", "›")));
+	assert.ok(raw[2].includes(theme().fg("dim", "claude-opus-5 (high)")));
+	assert.ok(raw[6].includes(theme().fg("dim", "+3 lines · tap or ctrl+o")));
+});
+
+test("below 60 terminal columns a running, failed or short consultation keeps the model row and shows no › nor tail", async (t) => {
+	const card = await advisorCard(t);
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(card({ partial: model }), 43), [
+		"",
+		"◇ Advisor consulting…",
+		"  claude-opus-5 (high)",
+	]);
+	const broken = failed("provider", "401 invalid x-api-key");
+	broken.final.durationMs = 12_000;
+	assert.deepEqual(plain(card(broken), 43), [
+		"",
+		"◇ Advisor failed 12s",
+		"  claude-opus-5 (high)",
+		"  401 invalid x-api-key",
+	]);
+	assert.deepEqual(plain(card(done("- one\n- two", 12_000)), 43), [
+		"",
+		"◇ Advisor 12s",
+		"  claude-opus-5 (high)",
+		"  - one",
+		"  - two",
+	]);
+});
+
+test("below 60 terminal columns a model id too long for its row ends with … and a narrow card never paints the right margin", async (t) => {
+	const card = await advisorCard(t);
+	densityTerminal(t, 44);
+	const long = card({
+		partial: longModel,
+		final: { text: advice, details: longModel, durationMs: 12_000 },
+	});
+	assert.equal(
+		plain(long, 43)[2],
+		"  anthropic/claude-opus-5-20261101-previe…",
+	);
+	for (const steps of states())
+		for (const width of [1, 2, 3, 5, 8, 20, 43]) {
+			const shown = card(steps);
+			if (steps.expanded) shown.setExpanded(true);
+			for (const line of shown.render(width))
+				assert.ok(visibleWidth(line) <= width - 1, `${width}: ${line}`);
+		}
+});
+
+test("below 60 terminal columns a card too narrow for its +N lines tail wraps the whole instruction over its rows", async (t) => {
+	const card = await advisorCard(t);
+	densityTerminal(t, 44);
+	const lines = plain(card(done(advice, 12_000)), 20);
+	const tail = lines.findIndex((line) => /^ {2}\+\d+ lines/.test(line));
+	assert.ok(tail > 0, lines.join("\n"));
+	assert.match(
+		lines
+			.slice(tail)
+			.map((line) => line.trim())
+			.join(" "),
+		/^\+\d+ lines · tap or ctrl\+o$/,
+	);
+	for (const line of lines.slice(tail)) assert.match(line, /^ {2}\S/);
+});
+
+test("at 60 and 100 terminal columns the advisor card renders the base's bytes in every phase", async (t) => {
+	const card = await advisorCard(t);
+	const terminal = densityTerminal(t, 60);
+	const broken = failed("provider", "401 invalid x-api-key");
+	broken.final.durationMs = 12_000;
+	const scenarios = {
+		running: { partial: model },
+		collapsed: done(advice, 12_000),
+		expanded: { ...done(advice, 12_000), expanded: true },
+		short: done("- one\n- two", 12_000),
+		failed: broken,
+	};
+	for (const [name, steps] of Object.entries(scenarios))
+		eachWideWidth(terminal, (width, columns) => {
+			const shown = card(steps);
+			if (steps.expanded) shown.setExpanded(true);
+			assert.deepEqual(
+				shown.render(width),
+				wideCards.advisor[name][width],
+				`${name} ${width} in ${columns}`,
+			);
+		});
+});
+
+test("one advisor card crossing 60 terminal columns in both directions switches layout on each render and keeps a click's expansion", async (t) => {
+	const card = await advisorCard(t);
+	const terminal = densityTerminal(t, 60);
+	const finished = card(done(advice, 12_000));
+	assert.deepEqual(finished.render(59), wideCards.advisor.collapsed[59]);
+	terminal.columns = 59;
+	assert.equal(plain(finished, 58).at(-1), "  +3 lines · tap or ctrl+o");
+	assert.ok(click(finished)?.handled);
+	assert.equal(plain(finished, 58).at(-1), "  Verify with a test per locale.");
+	terminal.columns = 60;
+	assert.deepEqual(finished.render(59), wideCards.advisor.expanded[59]);
+	terminal.columns = 59;
+	assert.equal(plain(finished, 58).at(-1), "  Verify with a test per locale.");
+});
+
 test("with the advisor unseated a past card falls back to plain text without the ◇ glyph", async (t) => {
 	const card = await advisorCard(t);
 	const finished = card(done(advice));
@@ -410,4 +533,11 @@ test("with the advisor unseated a past card falls back to plain text without the
 		plain(broken)[1],
 		"   ◇ Advisor failed  3s · claude-opus-5 (high)",
 	);
+
+	seat(["child-session"]);
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(card(done(advice, 12_000)), 43).slice(1, 3), [
+		"Advisor  12s · claude-opus-5 (high)",
+		"## Risks",
+	]);
 });
