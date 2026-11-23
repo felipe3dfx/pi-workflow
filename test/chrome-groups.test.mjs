@@ -1020,6 +1020,50 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	assert.equal(transcriptCursor.active(), true);
 });
 
+function scrollStates(scroll, contents) {
+	return contents.map((content) => {
+		scroll.updateLayout(content, 8, () => {});
+		return [scroll.scrollTop, scroll.isFollowingEnd];
+	});
+}
+
+test("at a fixed 44 or 100 terminal columns a manual scroll through a shrink and a regrow behaves as in Pi alone", (t) => {
+	const { mode, say } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	for (const columns of [44, 100]) {
+		terminal.columns = columns;
+		const views = [0, 1].map(() => {
+			const scroll = new ScrollView(new Container(), { follow: "end" });
+			scroll.updateLayout(33, 8, () => {});
+			scroll.scrollTo(20);
+			return scroll;
+		});
+		mode.transcriptScrollView = views[0];
+		say([said(`At ${columns}.`)], "stop");
+		const native = scrollStates(views[1], [22, 33]);
+		assert.deepEqual(native, [
+			[14, true],
+			[25, true],
+		]);
+		assert.deepEqual(scrollStates(views[0], [22, 33]), native, `${columns}`);
+	}
+});
+
+test("crossing 60 terminal columns onto exactly the end of the transcript keeps a manual scroll position without following the end", (t) => {
+	const { mode, say } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	const scroll = new ScrollView(new Container(), { follow: "end" });
+	mode.transcriptScrollView = scroll;
+	say([said("Hooked.")], "stop");
+	scroll.updateLayout(33, 8, () => {});
+	scroll.scrollTo(15);
+	assert.deepEqual([scroll.scrollTop, scroll.isFollowingEnd], [15, false]);
+	terminal.columns = 60;
+	assert.deepEqual(scrollStates(scroll, [23]), [[15, false]]);
+	terminal.columns = 44;
+	assert.deepEqual(scrollStates(scroll, [33]), [[15, false]]);
+});
+
 test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
 	const dir = withAgentDirectory(t);
 	writeAdvisorModel(dir, {
