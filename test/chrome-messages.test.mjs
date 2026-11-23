@@ -282,10 +282,10 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 		[9_940, "9.9s"],
 		[9_960, "10s"],
 		[59_400, "59s"],
-		[59_600, "1m0s"],
-		[60_000, "1m0s"],
-		[119_400, "1m59s"],
-		[119_600, "2m0s"],
+		[59_600, "1m 00s"],
+		[60_000, "1m 00s"],
+		[119_400, "1m 59s"],
+		[119_600, "2m 00s"],
 	];
 	for (const [ms, label] of cases) {
 		t.mock.timers.enable({ apis: ["Date"], now: 1_000 });

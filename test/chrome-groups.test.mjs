@@ -565,16 +565,16 @@ test("hover and the transcript cursor point at an advisor card's ◇ head as the
 		false,
 	);
 	container.addChild(card);
-	const head = "   ◇ Advisor  9s · claude-opus-5 (high)";
+	const head = "   ◇ Advisor  9.0s · claude-opus-5 (high)";
 	const row = render().indexOf(head);
 	assert.ok(row > 0);
 	assert.ok(mouse(container, 80, "move", row - 1)?.handled);
-	assert.equal(render()[row], "   ▸ Advisor  9s · claude-opus-5 (high)");
+	assert.equal(render()[row], "   ▸ Advisor  9.0s · claude-opus-5 (high)");
 	const text = render().findIndex((line) => line.includes("Asking."));
 	assert.ok(mouse(container, 80, "move", text)?.handled);
 	assert.equal(render()[row], head);
 	assert.ok(transcriptCursor.move(-1));
-	assert.ok(shows(render(), "   ▸ Advisor  9s · claude-opus-5 (high)"));
+	assert.ok(shows(render(), "   ▸ Advisor  9.0s · claude-opus-5 (high)"));
 	assert.ok(transcriptCursor.toggle());
 	assert.equal(card.expanded, true);
 	assert.ok(transcriptCursor.toggle());

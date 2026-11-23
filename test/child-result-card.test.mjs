@@ -80,6 +80,27 @@ const plain = (component, width = 90) =>
 		.render(width)
 		.map((line) => stripVTControlCharacters(line).trimEnd());
 
+test("a collapsed result reads its elapsed time in the shared duration format at narrow and wide widths", (t) => {
+	const { card } = cards(t);
+	for (const width of [44, 100]) {
+		for (const [elapsedMs, label] of [
+			[3_240, "3.2s"],
+			[12_400, "12s"],
+			[65_000, "1m 05s"],
+			[3_900_000, "1h 05m"],
+		]) {
+			const [, row] = plain(
+				card({
+					customType: "pi-workflow-child-result",
+					details: { ...details, elapsedMs },
+				}),
+				width,
+			);
+			assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
+		}
+	}
+});
+
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
 	assert.deepEqual(

@@ -19,6 +19,7 @@ import {
 	createChromeEditor,
 	PLACEHOLDER,
 } from "../extensions/chrome-editor.ts";
+import { childElapsed } from "../extensions/child-projection.ts";
 import { formatDuration } from "../extensions/visual-language.ts";
 
 const theme = {
@@ -241,10 +242,64 @@ test("token counts and durations use the compact formats", () => {
 		[420, 2_960, 34_000, 340_000, 1_200_000].map(formatOutputTokens),
 		["420", "2.96k", "34.0k", "340k", "1.20m"],
 	);
+});
+
+const durations = [
+	[-500, "0.0s"],
+	[0, "0.0s"],
+	[3_200, "3.2s"],
+	[3_640, "3.6s"],
+	[9_940, "9.9s"],
+	[9_960, "10s"],
+	[10_000, "10s"],
+	[12_400, "12s"],
+	[12_600, "13s"],
+	[59_400, "59s"],
+	[59_600, "1m 00s"],
+	[60_000, "1m 00s"],
+	[65_000, "1m 05s"],
+	[128_000, "2m 08s"],
+	[3_599_400, "59m 59s"],
+	[3_599_600, "1h 00m"],
+	[3_720_000, "1h 02m"],
+	[3_900_000, "1h 05m"],
+];
+
+test("durations read 3.2s under 10 s, rounded whole seconds, then 1m 05s, then 1h 05m", () => {
 	assert.deepEqual(
-		[3_640, 9_960, 44_000, 59_600, 128_000, 3_720_000].map(formatDuration),
-		["3.6s", "10s", "44s", "1m0s", "2m8s", "1h2m"],
+		durations.map(([ms]) => formatDuration(ms)),
+		durations.map(([, label]) => label),
 	);
+});
+
+test("a child's elapsed time reads the same as any other duration of the same length", () => {
+	for (const [ms, label] of durations.filter(([ms]) => ms >= 0)) {
+		assert.equal(
+			childElapsed({ createdAt: 1_000, endedAt: 1_000 + ms }, 0),
+			label,
+		);
+		assert.equal(
+			childElapsed({ createdAt: 0, startedAt: 2_000 }, 2_000 + ms),
+			label,
+		);
+	}
+	assert.equal(childElapsed({ createdAt: 5_000 }, 4_000), "0.0s");
+});
+
+test("the status row reads the same durations at narrow and wide widths", () => {
+	for (const width of [44, 100]) {
+		const [line] = plain(
+			renderStatusRow(
+				theme,
+				{ frame: 0, label: "Working", stepMs: 3_240, turnMs: 65_000 },
+				width,
+			),
+		);
+		assert.match(
+			line,
+			width < 60 ? /Working +1m 05s$/ : /Working 3\.2s +1m 05s$/,
+		);
+	}
 });
 
 test("the status row shows the spinner, activity, and step time on the left and the turn time and output tokens on the right", () => {

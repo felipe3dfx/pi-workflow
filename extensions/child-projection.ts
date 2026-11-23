@@ -2,6 +2,7 @@ import { type Static, Type } from "typebox";
 
 import type { Checkpoint } from "./child-checkpoint.ts";
 import type { AuthorizationDecision } from "./action-authorization.ts";
+import { formatDuration } from "./visual-language.ts";
 
 export function childName(child: { role: string; id: string }) {
 	return `${child.role} ${child.id.slice(0, 4)}`;
@@ -11,17 +12,9 @@ export function childElapsed(
 	child: { createdAt: number; startedAt?: number; endedAt?: number },
 	now: number,
 ) {
-	const seconds = Math.max(
-		0,
-		Math.floor(
-			((child.endedAt ?? now) - (child.startedAt ?? child.createdAt)) / 1000,
-		),
+	return formatDuration(
+		(child.endedAt ?? now) - (child.startedAt ?? child.createdAt),
 	);
-	const pad = (value: number) => String(value).padStart(2, "0");
-	if (seconds < 60) return `${seconds}s`;
-	if (seconds < 3600)
-		return `${Math.floor(seconds / 60)}m ${pad(seconds % 60)}s`;
-	return `${Math.floor(seconds / 3600)}h ${pad(Math.floor(seconds / 60) % 60)}m`;
 }
 
 function childTaskLine(task: string) {

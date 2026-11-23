@@ -79,8 +79,9 @@ export function formatDuration(ms: number) {
 	const whole = Math.round(tenths / 10);
 	if (whole < 60) return `${whole}s`;
 	const minutes = Math.floor(whole / 60);
-	if (minutes < 60) return `${minutes}m${whole % 60}s`;
-	return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
+	const pad = (value: number) => String(value).padStart(2, "0");
+	if (minutes < 60) return `${minutes}m ${pad(whole % 60)}s`;
+	return `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`;
 }
 
 export function spread(left: string, right: string, width: number) {
