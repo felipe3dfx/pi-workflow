@@ -727,7 +727,7 @@ const settingsWindows = new WeakMap<object, BodyWindow>();
 
 // A body taller than its room keeps its trailing hint block, the lines after
 // the last blank one, in view and scrolls the rest around the selected row.
-export function tallBody(body: readonly string[], room: number): BodyWindow {
+function tallBody(body: readonly string[], room: number): BodyWindow {
 	if (body.length <= room) return { lines: body, row: (shown) => shown };
 	const blank = body.lastIndexOf("");
 	const pinned = blank < 0 ? 0 : Math.min(body.length - blank - 1, room - 1);
