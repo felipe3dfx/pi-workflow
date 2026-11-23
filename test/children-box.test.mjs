@@ -242,7 +242,7 @@ test("a running row cycles the working spinner every 133 ms while other states k
 	}
 });
 
-test("below 60 terminal columns a finished timed-out row keeps the words timed out beside ✗ before its task and model are cut, so it never reads as failed, and 60 columns or more keeps ⧖", (t) => {
+test("below 60 terminal columns a finished timed-out row keeps the words timed out beside ✗ and drops the model so its task stays visible, so it never reads as failed, and 60 columns or more keeps ⧖", (t) => {
 	const finished = (state) =>
 		child({ state, startedAt: now - 12_000, endedAt: now - 2_000 });
 	const rows = (columns) =>
@@ -254,17 +254,17 @@ test("below 60 terminal columns a finished timed-out row keeps the words timed o
 	const terminal = densityTerminal(t, 43);
 	assert.deepEqual(rows(43), [
 		" ✗ worker a1b2 Fix t... grok-4.7 (high) 10s",
-		" ✗ timed out worker a1b2 ... grok-4.... 10s",
+		" ✗ timed out worker a1b2 Fix the fai... 10s",
 	]);
 	terminal.columns = 44;
 	assert.deepEqual(rows(44), [
 		" ✗ worker a1b2 Fix th... grok-4.7 (high) 10s",
-		" ✗ timed out worker a1b2 ... grok-4.7... 10s",
+		" ✗ timed out worker a1b2 Fix the fail... 10s",
 	]);
 	terminal.columns = 59;
 	assert.deepEqual(rows(59), [
 		" ✗ worker a1b2 Fix the failing test     grok-4.7 (high) 10s",
-		" ✗ timed out worker a1b2 Fix the fai... grok-4.7 (high) 10s",
+		` ✗ timed out worker a1b2 Fix the failing test${" ".repeat(11)}10s`,
 	]);
 	terminal.columns = 60;
 	assert.deepEqual(rows(60), [

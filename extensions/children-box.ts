@@ -88,17 +88,15 @@ function renderChildRow(
 ) {
 	const step = terminalSafeLine(childStep(child));
 	// Narrow, timed out shares ✗ with failed, so its state word is reserved
-	// before the task and model are cut (D-open-2).
-	const word =
-		narrowScreen() && child.state === "timed out"
-			? ` ${runStateMark(child.state).paint(theme, "timed out")}`
-			: "";
+	// and the model gives way so the task stays visible (D-open-2, NS-29).
+	const timedOut = narrowScreen() && child.state === "timed out";
+	const word = timedOut
+		? ` ${runStateMark(child.state).paint(theme, "timed out")}`
+		: "";
 	const head = ` ${rowGlyph(theme, child, now)}${word} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)}`;
-	const meta = childMeta(
-		child,
-		now,
-		word ? width - visibleWidth(head) - 4 : width,
-	);
+	const meta = timedOut
+		? childElapsed(child, now)
+		: childMeta(child, now, width);
 	const line = spread(`${head} ${step}`, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;
 }
