@@ -1044,6 +1044,53 @@ test("a saturated row whose time, tokens, and cost fit on its second line keeps 
 	assert.ok(cells[at + 1].endsWith(" 1m 05s · 1 tok · $0.01 "), cells[at + 1]);
 });
 
+async function unparented(t, child) {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(fakeSessions([child]), {
+		rows: 40,
+		audit: capture.audit,
+	});
+	await settle(view);
+	return view;
+}
+
+test("a saturated second line shows the incomplete-transcript warning in full when it fits and as partial log when it does not, keeping the full time", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+	});
+	const view = await unparented(t, child);
+	for (const [width, tail] of [
+		[96, "incomplete transcript · 3.2s"],
+		[92, "partial log · 3.2s"],
+		[80, "partial log · 3.2s"],
+	]) {
+		const cells = listCells(view.lines(width));
+		const second = cells[findListRowIndex(cells, "worker 5636") + 1];
+		assert.ok(second.endsWith(` ${tail} `), `${width}: ${second}`);
+	}
+});
+
+test("a saturated second line never clips its Steer state or time for the incomplete-transcript warning and leaves the warning to the detail when it cannot fit", async (t) => {
+	const child = record("27c1", {
+		state: "completed",
+		startedAt: now - 65_000,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const view = await unparented(t, child);
+	const lines = view.lines(72);
+	const cells = listCells(lines);
+	const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+	assert.ok(second.endsWith(" 1 undelivered · 1m 05s "), second);
+	assert.doesNotMatch(second, /partial|incomplete/);
+	assert.match(lines.join("\n"), /incomplete transcript \(live\)/);
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;

@@ -1528,15 +1528,18 @@ function createChildrenView(
 					: spread(head, theme.fg("dim", child.state), width);
 			const second = () => {
 				const time = runTime(child, now);
-				const compact = [...steerMarks(child, true), ...flags];
+				const steers = steerMarks(child, true);
+				const warnings = flags.length > 0 ? [flags, ["partial log"], []] : [[]];
 				const payload =
 					[
 						right([time, ...spend]),
-						...[spend, usage({ ...used, cost: 0 }), []].map((rest) =>
-							right([time, ...rest], compact),
+						...warnings.flatMap((warning) =>
+							[spend, usage({ ...used, cost: 0 }), []].map((rest) =>
+								right([time, ...rest], [...steers, ...warning]),
+							),
 						),
 					].find((text) => visibleWidth(text) <= width) ??
-					`${truncateToWidth(theme.fg("warning", compact.join(" · ")), width - visibleWidth(time) - 3, "…")}${theme.fg("dim", ` · ${time}`)}`;
+					`${truncateToWidth(theme.fg("warning", steers.join(" · ")), width - visibleWidth(time) - 3, "…")}${theme.fg("dim", ` · ${time}`)}`;
 				const free = width - visibleWidth(payload);
 				const room = free - 5;
 				return room >= Math.min(visibleWidth(detail), 4)
