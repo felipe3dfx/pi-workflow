@@ -669,7 +669,50 @@ function transcriptViewport(mode: unknown): Viewport {
 	};
 }
 
+type Layout = {
+	currentScrollTop: number;
+	followingEnd: boolean;
+	followSuppressedAtEnd: boolean;
+	updateLayout(content: number, viewport: number, render?: () => void): void;
+};
+
+const anchoredViews = new Set<Layout>();
+
+// A reflow that clamps a manual position must not turn follow-end back on,
+// and the position returns once the content is tall enough again (NS-02).
+function holdAnchor(scroll: Layout) {
+	if (anchoredViews.has(scroll) || typeof scroll.updateLayout !== "function")
+		return;
+	anchoredViews.add(scroll);
+	const layout = scroll.updateLayout;
+	let held: { top: number; shown: number } | undefined;
+	scroll.updateLayout = function (this: Layout, content, viewport, render) {
+		if (this.followingEnd) {
+			held = undefined;
+			return layout.call(this, content, viewport, render);
+		}
+		if (held?.shown !== this.currentScrollTop) held = undefined;
+		const top = held?.top ?? this.currentScrollTop;
+		this.currentScrollTop = top;
+		layout.call(this, content, viewport, render);
+		if (this.currentScrollTop < top) {
+			held = { top, shown: this.currentScrollTop };
+			this.followingEnd = false;
+			this.followSuppressedAtEnd = true;
+		} else held = undefined;
+	};
+}
+
+function releaseAnchors() {
+	for (const scroll of anchoredViews)
+		delete (scroll as Partial<Layout>).updateLayout;
+	anchoredViews.clear();
+}
+
 function foldChat(mode: unknown) {
+	const scroll = (mode as { transcriptScrollView?: Layout })
+		.transcriptScrollView;
+	if (scroll) holdAnchor(scroll);
 	const chat = (mode as { chatContainer?: Container }).chatContainer;
 	if (chat)
 		patchChat(
@@ -867,6 +910,7 @@ export function patchMessages() {
 export function restoreMessages() {
 	patchSet.restore();
 	restoreChat();
+	releaseAnchors();
 	thinkingTimes.clear();
 	shared.latestCollapsed = undefined;
 	shared.saveThinkingTime = undefined;

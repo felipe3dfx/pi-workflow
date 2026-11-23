@@ -8,7 +8,12 @@ import {
 	initTheme,
 	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Container,
+	Markdown,
+	ScrollView,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import { createAdvisor } from "../extensions/advisor.ts";
 import { toolKind, transcriptCursor } from "../extensions/chrome-groups.ts";
@@ -842,23 +847,30 @@ test("crossing 60 terminal columns keeps the selection on a thinking block that 
 	}
 });
 
-test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection and the scroll position", (t) => {
+test("crossing 60 terminal columns in both directions keeps expanded blocks, open groups, the selection, keyboard focus and a manual scroll position", (t) => {
 	const { mode, say, tool, render } = chat(t);
 	t.after(() => transcriptCursor.leave());
 	const terminal = densityTerminal(t, 44);
+	const scroll = new ScrollView(mode.chatContainer, { follow: "end" });
+	mode.transcriptScrollView = scroll;
 	say([thought(), said("Looking.")], "stop");
+	for (let i = 0; i < 6; i++)
+		say(
+			[
+				said(
+					`Paragraph ${i} keeps going long enough to wrap over several rows, so the transcript height changes when the lane appears or goes away again.`,
+				),
+			],
+			"stop",
+		);
 	tool("read", { path: "a.ts" });
 	tool("grep", { pattern: "TODO" }, { text: "hit" });
 	const command = tool("bash", { command: "ls" }, { text: "one" });
-	tool("bash", { command: "pwd" }, { text: "/" });
-	const calls = [];
-	mode.transcriptScrollView = {
-		contentHeight: 1000,
-		scrollTop: 0,
-		viewportHeight: 1000,
-		isFollowingEnd: false,
-		scrollTo: (top) => calls.push(["to", top]),
-		scrollToEnd: () => calls.push(["end"]),
+	const last = tool("bash", { command: "pwd" }, { text: "/" });
+	const frame = () => {
+		const lines = scroll.render(43);
+		scroll.updateLayout(lines.length, 8, () => {});
+		return lines;
 	};
 	const container = mode.chatContainer;
 	const thinking = render(43).indexOf("◆ Thought");
@@ -866,19 +878,32 @@ test("crossing 60 terminal columns in both directions keeps expanded blocks, ope
 	const header = render(43).indexOf("◈ Read 1 file, Searched 1 pattern");
 	assert.ok(mouse(container, 43, "click", header)?.handled);
 	command.setExpanded(true);
-	assert.ok(transcriptCursor.move(-1));
-	const narrow = container.render(43);
 	terminal.columns = 60;
-	const wide = render(59);
+	frame();
+	assert.ok(transcriptCursor.move(-1));
+	scroll.scrollBy(-3);
+	const top = scroll.scrollTop;
+	assert.ok(top > 0 && !scroll.isFollowingEnd);
+	terminal.columns = 44;
+	const narrow = frame();
+	assert.ok(narrow.length - 8 < top, "the narrow layout clamps the anchor");
+	assert.equal(scroll.scrollTop, narrow.length - 8);
+	assert.equal(scroll.isFollowingEnd, false);
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(last.expanded, true);
+	terminal.columns = 60;
+	const wide = frame().map((line) => stripVTControlCharacters(line).trimEnd());
 	assert.ok(wide.includes("   ┃ ◆ Thought"));
 	assert.ok(wide.includes("   ◆ Read a.ts"));
 	assert.ok(wide.includes("   ┃ $ ls"));
-	assert.ok(shows(wide, "   ▸ Run pwd"));
+	assert.equal(scroll.scrollTop, top);
+	assert.equal(scroll.isFollowingEnd, false);
+	assert.ok(transcriptCursor.toggle());
+	assert.equal(last.expanded, false);
 	terminal.columns = 44;
-	assert.deepEqual(container.render(43), narrow);
+	assert.deepEqual(frame(), narrow);
 	assert.equal(command.expanded, true);
 	assert.equal(transcriptCursor.active(), true);
-	assert.deepEqual(calls, []);
 });
 
 test("below 60 terminal columns the advisor card takes the row's lane through the row margin", (t) => {
