@@ -250,11 +250,11 @@ function compact<
 
 // Painted on every render, never cached at call time, so an existing row
 // follows the density of the width it is drawn at after a resize (NS-02).
-function live(
-	paint: () => string,
-	make: (text: string) => Component = (text) => new TruncatedText(text),
-): Component {
-	return { render: (width) => make(paint()).render(width), invalidate() {} };
+function live(paint: () => string): Component {
+	return {
+		render: (width) => new TruncatedText(paint()).render(width),
+		invalidate() {},
+	};
 }
 
 function usesFallback(toolName: string, own: ToolRenderers | undefined) {
@@ -342,8 +342,17 @@ function fallbackRenderers(toolName: string, own: ToolRenderers | undefined) {
 		): Component {
 			const head = () => title(toolName, args, theme, context);
 			const body = theme.fg("dim", JSON.stringify(args ?? {}, null, 2));
+			// One Text kept across redraws: setText with the freshly painted head
+			// keeps the live ◆ while unchanged text reuses Pi's wrapping cache.
+			const open = new Text("", 0, 0);
 			return new View(
-				live(head, (text) => new Text(`${text}\n${body}`, 0, 0)),
+				{
+					render(width) {
+						open.setText(`${head()}\n${body}`);
+						return open.render(width);
+					},
+					invalidate: () => open.invalidate(),
+				},
 				live(head),
 				bar(theme, context.expanded),
 			);
