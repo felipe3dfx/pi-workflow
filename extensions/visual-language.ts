@@ -99,11 +99,17 @@ export function formatDuration(ms: number) {
 	return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
 }
 
-export function spread(left: string, right: string, width: number) {
+export function spread(
+	left: string,
+	right: string,
+	width: number,
+	ellipsis = "...",
+) {
 	const shown = truncateToWidth(
 		left,
 		Math.max(0, width - visibleWidth(right) - 1),
+		ellipsis,
 	);
 	const gap = Math.max(1, width - visibleWidth(shown) - visibleWidth(right));
-	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width);
+	return truncateToWidth(`${shown}${" ".repeat(gap)}${right}`, width, ellipsis);
 }

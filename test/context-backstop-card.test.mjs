@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -49,6 +50,9 @@ function card(t, details, content = backstopNotice(details)) {
 		1,
 	);
 }
+
+const theme = () =>
+	globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 
 const plain = (component, width = 140) =>
 	component
@@ -123,6 +127,126 @@ test("a backstop without numeric details falls back to Pi's default rendering", 
 			line.includes(`[${CONTEXT_BACKSTOP_TYPE}]`),
 		),
 	);
+});
+
+test("below 60 terminal columns the backstop head keeps the usage, its meter and ›, and the → action takes its own row", (t) => {
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(card(t, facts), 43), [
+		"",
+		`◆ Context 156K / 150K ▰▱▱▱▱▱▱▱${" ".repeat(11)}›`,
+		"  → delegate the next bounded unit",
+	]);
+	const raw = card(t, facts).render(43);
+	assert.ok(
+		raw[2].includes(theme().fg("warning", "→ delegate the next bounded unit")),
+	);
+	assert.ok(raw[1].endsWith(theme().fg("dim", "›")));
+});
+
+test("below 60 terminal columns the backstop states the advisor on a dim row of its own, only when the details carry it", (t) => {
+	densityTerminal(t, 44);
+	for (const [advisor, status] of [
+		[{ turnsAgo: 3 }, "advisor ✓ 3 turns ago"],
+		[{ turnsAgo: 1 }, "advisor ✓ 1 turn ago"],
+		[{ turnsAgo: 0 }, "advisor ✓ this turn"],
+		[{}, "advisor not consulted"],
+	])
+		assert.deepEqual(plain(card(t, { ...facts, advisor }), 43).slice(1), [
+			`◆ Context 156K / 150K ▰▱▱▱▱▱▱▱${" ".repeat(11)}›`,
+			"  → delegate the next bounded unit",
+			`  ${status}`,
+		]);
+	const raw = card(t, { ...facts, advisor: {} }).render(43);
+	assert.ok(raw[3].includes(theme().fg("dim", "advisor not consulted")));
+});
+
+test("below 60 terminal columns a backstop narrower than its row cuts the head with … before › and wraps the action whole", (t) => {
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(card(t, { ...facts, advisor: { turnsAgo: 3 } }), 24), [
+		"",
+		"◆ Context 156K / 150… ›",
+		"  → delegate the next",
+		"  bounded unit",
+		"  advisor ✓ 3 turns ago",
+	]);
+	for (const width of [1, 2, 3, 5])
+		for (const line of card(t, facts).render(width))
+			assert.ok(piTui.visibleWidth(line) <= width - 1, `${width}: ${line}`);
+});
+
+test("below 60 terminal columns an expanded backstop keeps ›, the action and the advisor row above the full text", (t) => {
+	densityTerminal(t, 44);
+	const component = card(t, { ...facts, advisor: {} });
+	component.setExpanded(true);
+	const lines = plain(component, 43);
+	assert.deepEqual(lines.slice(1, 5), [
+		`◆ Context 156K / 150K ▰▱▱▱▱▱▱▱${" ".repeat(11)}›`,
+		"  → delegate the next bounded unit",
+		"  advisor not consulted",
+		"  Context backstop: the parent context",
+	]);
+	for (const line of lines.slice(4)) assert.match(line, /^ {2}\S/);
+});
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-cards.json", import.meta.url), "utf8"),
+);
+
+test("at 60 and 100 terminal columns the backstop renders the base's bytes, collapsed, with each advisor state and expanded", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const scenarios = {
+		bare: () => card(t, facts),
+		consulted: () =>
+			card(t, { ...facts, advisor: { turnsAgo: 3 } }, backstopNotice(facts)),
+		unconsulted: () =>
+			card(t, { ...facts, advisor: {} }, backstopNotice(facts)),
+		expanded: () => {
+			const component = card(t, { ...facts, advisor: { turnsAgo: 0 } });
+			component.setExpanded(true);
+			return component;
+		},
+	};
+	for (const [name, make] of Object.entries(scenarios))
+		for (const [columns, widths] of [
+			[60, [59, 60]],
+			[100, [99, 100]],
+		]) {
+			terminal.columns = columns;
+			for (const width of widths)
+				assert.deepEqual(
+					make().render(width),
+					wideBytes.backstop[name][width],
+					`${name} ${width} in ${columns}`,
+				);
+		}
+});
+
+test("one backstop opened by a click and crossing 60 terminal columns in both directions switches layout on each render and stays open", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const component = card(t, { ...facts, advisor: { turnsAgo: 0 } });
+	assert.ok(
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 3,
+			y: 1,
+			width: 59,
+			height: 2,
+			screenX: 3,
+			screenY: 1,
+		})?.handled,
+	);
+	assert.deepEqual(component.render(59), wideBytes.backstop.expanded[59]);
+	terminal.columns = 59;
+	const narrow = plain(component, 58);
+	assert.deepEqual(narrow.slice(1, 4), [
+		`◆ Context 156K / 150K ▰▱▱▱▱▱▱▱${" ".repeat(26)}›`,
+		"  → delegate the next bounded unit",
+		"  advisor ✓ this turn",
+	]);
+	assert.match(narrow[4], /^ {2}Context backstop:/);
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideBytes.backstop.expanded[59]);
 });
 
 test("below 60 terminal columns the notice card puts its glyph in the lane, its body at the body column and keeps the right margin", (t) => {

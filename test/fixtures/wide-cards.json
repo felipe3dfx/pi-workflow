@@ -1,0 +1,430 @@
+{
+  "backstop": {
+    "bare": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next\u001b[0m...\u001b[0m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next \u001b[0m...\u001b[0m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m            \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m             \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ]
+    },
+    "consulted": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next\u001b[0m...\u001b[0m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next \u001b[0m...\u001b[0m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor \u001b[39m\u001b[38;2;104;183;141m✓\u001b[39m\u001b[38;2;126;136;142m 3 turns ago\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor \u001b[39m\u001b[38;2;104;183;141m✓\u001b[39m\u001b[38;2;126;136;142m 3 turns ago\u001b[39m"
+      ]
+    },
+    "unconsulted": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next\u001b[0m...\u001b[0m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next \u001b[0m...\u001b[0m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor not consulted\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor not consulted\u001b[39m"
+      ]
+    },
+    "expanded": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next\u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mContext backstop: the parent context holds 156,514",
+        "     \u001b[38;2;126;136;142mtokens, at or above the 150,000-token threshold.",
+        "     \u001b[38;2;126;136;142mDelegate the next bounded multi-step unit to a",
+        "     \u001b[38;2;126;136;142mchild session through spawn_child; single small",
+        "     \u001b[38;2;126;136;142medits and state checks stay inline. Consult the",
+        "     \u001b[38;2;126;136;142madvisor before choosing the delegation boundary.",
+        "     \u001b[38;2;126;136;142mThis is runtime context for the original task, not",
+        "     \u001b[38;2;126;136;142ma new user request. This notice grants no mutation",
+        "     \u001b[38;2;126;136;142mor guard bypass authority.\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next \u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mContext backstop: the parent context holds 156,514",
+        "     \u001b[38;2;126;136;142mtokens, at or above the 150,000-token threshold.",
+        "     \u001b[38;2;126;136;142mDelegate the next bounded multi-step unit to a child",
+        "     \u001b[38;2;126;136;142msession through spawn_child; single small edits and",
+        "     \u001b[38;2;126;136;142mstate checks stay inline. Consult the advisor before",
+        "     \u001b[38;2;126;136;142mchoosing the delegation boundary. This is runtime",
+        "     \u001b[38;2;126;136;142mcontext for the original task, not a new user",
+        "     \u001b[38;2;126;136;142mrequest. This notice grants no mutation or guard",
+        "     \u001b[38;2;126;136;142mbypass authority.\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor \u001b[39m\u001b[38;2;104;183;141m✓\u001b[39m\u001b[38;2;126;136;142m this turn\u001b[39m",
+        "     \u001b[38;2;126;136;142mContext backstop: the parent context holds 156,514 tokens, at or above the 150,000-token",
+        "     \u001b[38;2;126;136;142mthreshold. Delegate the next bounded multi-step unit to a child session through",
+        "     \u001b[38;2;126;136;142mspawn_child; single small edits and state checks stay inline. Consult the advisor before",
+        "     \u001b[38;2;126;136;142mchoosing the delegation boundary. This is runtime context for the original task, not a new",
+        "     \u001b[38;2;126;136;142muser request. This notice grants no mutation or guard bypass authority.\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mContext\u001b[39m \u001b[38;2;205;154;34m156K / 150K ▰▱▱▱▱▱▱▱\u001b[39m\u001b[38;2;126;136;142m · delegate the next bounded unit\u001b[39m\u001b[38;2;126;136;142m · advisor \u001b[39m\u001b[38;2;104;183;141m✓\u001b[39m\u001b[38;2;126;136;142m this turn\u001b[39m",
+        "     \u001b[38;2;126;136;142mContext backstop: the parent context holds 156,514 tokens, at or above the 150,000-token",
+        "     \u001b[38;2;126;136;142mthreshold. Delegate the next bounded multi-step unit to a child session through spawn_child;",
+        "     \u001b[38;2;126;136;142msingle small edits and state checks stay inline. Consult the advisor before choosing the",
+        "     \u001b[38;2;126;136;142mdelegation boundary. This is runtime context for the original task, not a new user request.",
+        "     \u001b[38;2;126;136;142mThis notice grants no mutation or guard bypass authority.\u001b[39m"
+      ]
+    }
+  },
+  "budget": {
+    "collapsed": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continu\u001b[0m...\u001b[0m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue\u001b[0m...\u001b[0m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue discovery in an explore child\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue discovery in an explore child\u001b[39m"
+      ]
+    },
+    "expanded": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continu\u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mExploration budget: 4 tracked lookups and 47,029",
+        "     \u001b[38;2;126;136;142mUTF-8 text bytes (an approximate evidence budget).",
+        "     \u001b[38;2;126;136;142mOngoing discovery needs an explore child through",
+        "     \u001b[38;2;126;136;142mspawn_child, or a verify child when it checks a",
+        "     \u001b[38;2;126;136;142mchange, even if read-only or initially small.",
+        "     \u001b[38;2;126;136;142mPreparation for an already-understood inline write",
+        "     \u001b[38;2;126;136;142mremains exempt. This is runtime context for the",
+        "     \u001b[38;2;126;136;142moriginal task, not a new user request. This notice",
+        "     \u001b[38;2;126;136;142mgrants no mutation or guard bypass authority.\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue\u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mExploration budget: 4 tracked lookups and 47,029",
+        "     \u001b[38;2;126;136;142mUTF-8 text bytes (an approximate evidence budget).",
+        "     \u001b[38;2;126;136;142mOngoing discovery needs an explore child through",
+        "     \u001b[38;2;126;136;142mspawn_child, or a verify child when it checks a",
+        "     \u001b[38;2;126;136;142mchange, even if read-only or initially small.",
+        "     \u001b[38;2;126;136;142mPreparation for an already-understood inline write",
+        "     \u001b[38;2;126;136;142mremains exempt. This is runtime context for the",
+        "     \u001b[38;2;126;136;142moriginal task, not a new user request. This notice",
+        "     \u001b[38;2;126;136;142mgrants no mutation or guard bypass authority.\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue discovery in an explore child\u001b[39m",
+        "     \u001b[38;2;126;136;142mExploration budget: 4 tracked lookups and 47,029 UTF-8 text bytes (an approximate evidence",
+        "     \u001b[38;2;126;136;142mbudget). Ongoing discovery needs an explore child through spawn_child, or a verify child",
+        "     \u001b[38;2;126;136;142mwhen it checks a change, even if read-only or initially small. Preparation for an",
+        "     \u001b[38;2;126;136;142malready-understood inline write remains exempt. This is runtime context for the original",
+        "     \u001b[38;2;126;136;142mtask, not a new user request. This notice grants no mutation or guard bypass authority.\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mExploration budget\u001b[39m \u001b[38;2;126;136;142m· 4 lookups · 47 KB → continue discovery in an explore child\u001b[39m",
+        "     \u001b[38;2;126;136;142mExploration budget: 4 tracked lookups and 47,029 UTF-8 text bytes (an approximate evidence",
+        "     \u001b[38;2;126;136;142mbudget). Ongoing discovery needs an explore child through spawn_child, or a verify child",
+        "     \u001b[38;2;126;136;142mwhen it checks a change, even if read-only or initially small. Preparation for an",
+        "     \u001b[38;2;126;136;142malready-understood inline write remains exempt. This is runtime context for the original",
+        "     \u001b[38;2;126;136;142mtask, not a new user request. This notice grants no mutation or guard bypass authority.\u001b[39m"
+      ]
+    }
+  },
+  "result": {
+    "collapsed": {
+      "59": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636  \u001b[38;2;126;136;142m1m 02s\u001b[39m     \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636  \u001b[38;2;126;136;142m1m 02s\u001b[39m      \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636  \u001b[38;2;126;136;142m1m 02s\u001b[39m                                             \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636  \u001b[38;2;126;136;142m1m 02s\u001b[39m                                              \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m"
+      ]
+    },
+    "blocked": {
+      "59": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142m1m 02s\u001b[39m",
+        "     \u001b[38;2;126;136;142mDatabase access is missing\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142m1m 02s\u001b[39m",
+        "     \u001b[38;2;126;136;142mDatabase access is missing\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142m1m 02s\u001b[39m                                     \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m",
+        "     \u001b[38;2;126;136;142mDatabase access is missing\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142m1m 02s\u001b[39m                                      \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m",
+        "     \u001b[38;2;126;136;142mDatabase access is missing\u001b[39m"
+      ]
+    },
+    "expanded": {
+      "59": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142mgpt-6-luna (high) \u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mTask Run sleep 60 to wait 60 seconds\u001b[39m",
+        "     \u001b[38;2;126;136;142mReason: Database access is missing\u001b[39m",
+        "     Done; I ran \u001b[38;2;167;152;215msleep 60\u001b[39m and waited 60 seconds.",
+        "     \u001b[38;2;126;136;142malt+a  open in subagents view\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142mgpt-6-luna (high) ·\u001b[0m...\u001b[0m",
+        "     \u001b[38;2;126;136;142mTask Run sleep 60 to wait 60 seconds\u001b[39m",
+        "     \u001b[38;2;126;136;142mReason: Database access is missing\u001b[39m",
+        "     Done; I ran \u001b[38;2;167;152;215msleep 60\u001b[39m and waited 60 seconds.",
+        "     \u001b[38;2;126;136;142malt+a  open in subagents view\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142mgpt-6-luna (high) · 1m 02s\u001b[39m               \u001b[38;2;126;136;142m(ctrl+o to collapse)\u001b[39m",
+        "     \u001b[38;2;126;136;142mTask Run sleep 60 to wait 60 seconds\u001b[39m",
+        "     \u001b[38;2;126;136;142mReason: Database access is missing\u001b[39m",
+        "     Done; I ran \u001b[38;2;167;152;215msleep 60\u001b[39m and waited 60 seconds.",
+        "     \u001b[38;2;126;136;142malt+a  open in subagents view\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34mblocked\u001b[39m  \u001b[38;2;126;136;142mgpt-6-luna (high) · 1m 02s\u001b[39m                \u001b[38;2;126;136;142m(ctrl+o to collapse)\u001b[39m",
+        "     \u001b[38;2;126;136;142mTask Run sleep 60 to wait 60 seconds\u001b[39m",
+        "     \u001b[38;2;126;136;142mReason: Database access is missing\u001b[39m",
+        "     Done; I ran \u001b[38;2;167;152;215msleep 60\u001b[39m and waited 60 seconds.",
+        "     \u001b[38;2;126;136;142malt+a  open in subagents view\u001b[39m"
+      ]
+    },
+    "question": {
+      "59": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34masks · question 2\u001b[39m",
+        "     Which database should I use?"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34masks · question 2\u001b[39m",
+        "     Which database should I use?"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34masks · question 2\u001b[39m                                   \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m",
+        "     Which database should I use?"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;205;154;34m◆\u001b[39m \u001b[38;2;157;165;169mSubagent\u001b[39m worker 5636 \u001b[38;2;205;154;34masks · question 2\u001b[39m                                    \u001b[38;2;126;136;142m(ctrl+o to expand)\u001b[39m",
+        "     Which database should I use?"
+      ]
+    },
+    "answer": {
+      "59": [
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mParent\u001b[39m → 5636 \u001b[38;2;222;224;225m· answer 2\u001b[39m",
+        "     Use Postgres."
+      ],
+      "60": [
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mParent\u001b[39m → 5636 \u001b[38;2;222;224;225m· answer 2\u001b[39m",
+        "     Use Postgres."
+      ],
+      "99": [
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mParent\u001b[39m → 5636 \u001b[38;2;222;224;225m· answer 2\u001b[39m",
+        "     Use Postgres."
+      ],
+      "100": [
+        "   \u001b[38;2;222;224;225m◆\u001b[39m \u001b[38;2;157;165;169mParent\u001b[39m → 5636 \u001b[38;2;222;224;225m· answer 2\u001b[39m",
+        "     Use Postgres."
+      ]
+    }
+  },
+  "advisor": {
+    "running": {
+      "59": [
+        "",
+        "   \u001b[38;2;125;207;255m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;125;207;255mconsulting…\u001b[39m  \u001b[38;2;108;108;108mclaude-opus-5 (high)\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;125;207;255m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;125;207;255mconsulting…\u001b[39m  \u001b[38;2;108;108;108mclaude-opus-5 (high)\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;125;207;255m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;125;207;255mconsulting…\u001b[39m  \u001b[38;2;108;108;108mclaude-opus-5 (high)\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;125;207;255m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;125;207;255mconsulting…\u001b[39m  \u001b[38;2;108;108;108mclaude-opus-5 (high)\u001b[39m"
+      ]
+    },
+    "collapsed": {
+      "59": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m… 3 more lines\u001b[39m \u001b[38;2;108;108;108m(ctrl+o to expand)\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m… 3 more lines\u001b[39m \u001b[38;2;108;108;108m(ctrl+o to expand)\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m                                      \u001b[38;2;108;108;108m(ctrl+o to expand)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m… 3 more lines\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m                                       \u001b[38;2;108;108;108m(ctrl+o to expand)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m… 3 more lines\u001b[39m"
+      ]
+    },
+    "expanded": {
+      "59": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe retry loop never backs off.",
+        "     ",
+        "     Verify with a test per locale."
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe retry loop never backs off.",
+        "     ",
+        "     Verify with a test per locale."
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m                                    \u001b[38;2;108;108;108m(ctrl+o to collapse)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe retry loop never backs off.",
+        "     ",
+        "     Verify with a test per locale."
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m                                     \u001b[38;2;108;108;108m(ctrl+o to collapse)\u001b[39m",
+        "     \u001b[38;2;122;162;247mRisks\u001b[39m",
+        "     ",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe cache key ignores the locale.",
+        "     \u001b[38;2;108;108;108m- \u001b[39mThe retry loop never backs off.",
+        "     ",
+        "     Verify with a test per locale."
+      ]
+    },
+    "short": {
+      "59": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;108;108;108m- \u001b[39mone",
+        "     \u001b[38;2;108;108;108m- \u001b[39mtwo"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;108;108;108m- \u001b[39mone",
+        "     \u001b[38;2;108;108;108m- \u001b[39mtwo"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;108;108;108m- \u001b[39mone",
+        "     \u001b[38;2;108;108;108m- \u001b[39mtwo"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;187;154;247m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;108;108;108m- \u001b[39mone",
+        "     \u001b[38;2;108;108;108m- \u001b[39mtwo"
+      ]
+    },
+    "failed": {
+      "59": [
+        "",
+        "   \u001b[38;2;247;118;142m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;247;118;142mfailed\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;247;118;142m401 invalid x-api-key\u001b[39m"
+      ],
+      "60": [
+        "",
+        "   \u001b[38;2;247;118;142m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;247;118;142mfailed\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;247;118;142m401 invalid x-api-key\u001b[39m"
+      ],
+      "99": [
+        "",
+        "   \u001b[38;2;247;118;142m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;247;118;142mfailed\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;247;118;142m401 invalid x-api-key\u001b[39m"
+      ],
+      "100": [
+        "",
+        "   \u001b[38;2;247;118;142m◇\u001b[39m \u001b[38;2;120;120;120mAdvisor\u001b[39m \u001b[38;2;247;118;142mfailed\u001b[39m  \u001b[38;2;108;108;108m12s · claude-opus-5 (high)\u001b[39m",
+        "     \u001b[38;2;247;118;142m401 invalid x-api-key\u001b[39m"
+      ]
+    }
+  }
+}

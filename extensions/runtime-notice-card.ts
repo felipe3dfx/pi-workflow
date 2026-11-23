@@ -10,9 +10,19 @@ import {
 import { markToggle } from "./chrome-groups.ts";
 import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import { terminalSafeBlock } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import { narrowScreen, spread } from "./visual-language.ts";
 
 export type NoticeMessage = { content: unknown; details?: unknown };
+
+export type NoticeParts = {
+	head: string;
+	action: string;
+	status?: string;
+	// Today's single wide row, kept byte for byte at 60 columns and above.
+	line: string;
+};
+
+const lane = "  ";
 
 const opened = new WeakMap<NoticeMessage, boolean>();
 
@@ -27,19 +37,19 @@ function noticeText(content: unknown) {
 
 export class RuntimeNoticeCard implements Component {
 	message: NoticeMessage;
-	head: string;
+	parts: NoticeParts;
 	text: string;
 	expanded: boolean;
 	theme: Theme;
 
 	constructor(
 		message: NoticeMessage,
-		head: string,
+		parts: NoticeParts,
 		expanded: boolean,
 		theme: Theme,
 	) {
 		this.message = message;
-		this.head = head;
+		this.parts = parts;
 		this.text = noticeText(message.content);
 		this.expanded = expanded;
 		this.theme = theme;
@@ -60,6 +70,31 @@ export class RuntimeNoticeCard implements Component {
 	}
 
 	render(outer: number) {
+		return narrowScreen() ? this.narrow(outer) : this.wide(outer);
+	}
+
+	narrow(outer: number) {
+		const t = this.theme;
+		const { width } = blockMargin(assistantInset, outer);
+		const inner = Math.max(1, width - lane.length);
+		const { head, action, status } = this.parts;
+		const lines = [
+			spread(head, t.fg("dim", "›"), width, "…"),
+			...wrapTextWithAnsi(t.fg("warning", `→ ${action}`), inner).map(
+				(line) => lane + line,
+			),
+		];
+		if (status) lines.push(lane + truncateToWidth(status, inner, "…"));
+		if (this.open() && this.text)
+			for (const line of wrapTextWithAnsi(
+				t.fg("dim", terminalSafeBlock(this.text)),
+				inner,
+			))
+				lines.push(lane + line);
+		return lines.map((line) => truncateToWidth(line, width, "…"));
+	}
+
+	wide(outer: number) {
 		const t = this.theme;
 		const { left, width: room } = blockMargin(assistantInset, outer);
 		const width = Math.max(1, room);
@@ -69,9 +104,9 @@ export class RuntimeNoticeCard implements Component {
 			? t.fg("dim", `(${key} to ${this.open() ? "collapse" : "expand"})`)
 			: "";
 		const top =
-			hint && visibleWidth(this.head) + visibleWidth(hint) + 2 <= width
-				? spread(this.head, hint, width)
-				: truncateToWidth(this.head, width);
+			hint && visibleWidth(this.parts.line) + visibleWidth(hint) + 2 <= width
+				? spread(this.parts.line, hint, width)
+				: truncateToWidth(this.parts.line, width);
 		const lines = [margin + top];
 		if (!this.open() || !this.text) return lines;
 		const inner = Math.max(1, width - 2);

@@ -7,6 +7,7 @@ import {
 } from "./context-backstop.ts";
 import {
 	type NoticeMessage,
+	type NoticeParts,
 	RuntimeNoticeCard,
 } from "./runtime-notice-card.ts";
 
@@ -21,22 +22,34 @@ function meter(tokens: number, contextWindow: number | undefined) {
 	return ` ${"▰".repeat(filled)}${"▱".repeat(meterCells - filled)}`;
 }
 
-function advisorStatus(t: Theme, advisor: BackstopDetails["advisor"]) {
+function advisorStatus(
+	t: Theme,
+	advisor: BackstopDetails["advisor"],
+	lead: string,
+) {
 	if (!advisor) return "";
 	const { turnsAgo } = advisor;
 	if (typeof turnsAgo !== "number")
-		return t.fg("dim", " · advisor not consulted");
+		return t.fg("dim", `${lead}advisor not consulted`);
 	const when =
 		turnsAgo === 0
 			? "this turn"
 			: `${turnsAgo} ${turnsAgo === 1 ? "turn" : "turns"} ago`;
-	return `${t.fg("dim", " · advisor ")}${t.fg("success", "✓")}${t.fg("dim", ` ${when}`)}`;
+	return `${t.fg("dim", `${lead}advisor `)}${t.fg("success", "✓")}${t.fg("dim", ` ${when}`)}`;
 }
 
-function backstopHead(t: Theme, details: BackstopDetails) {
+const action = "delegate the next bounded unit";
+
+function backstopParts(t: Theme, details: BackstopDetails): NoticeParts {
 	const { tokens, threshold, contextWindow, advisor } = details;
 	const usage = `${formatContextTokens(tokens)} / ${formatContextTokens(threshold)}${meter(tokens, contextWindow)}`;
-	return `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", "Context"))} ${t.fg("warning", usage)}${t.fg("dim", " · delegate the next bounded unit")}${advisorStatus(t, advisor)}`;
+	const head = `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", "Context"))} ${t.fg("warning", usage)}`;
+	return {
+		head,
+		action,
+		status: advisorStatus(t, advisor, ""),
+		line: `${head}${t.fg("dim", ` · ${action}`)}${advisorStatus(t, advisor, " · ")}`,
+	};
 }
 
 export function registerContextBackstopCard(pi: ExtensionAPI) {
@@ -51,7 +64,7 @@ export function registerContextBackstopCard(pi: ExtensionAPI) {
 				return undefined;
 			return new RuntimeNoticeCard(
 				message,
-				backstopHead(t, details),
+				backstopParts(t, details),
 				expanded,
 				t,
 			);

@@ -24,9 +24,19 @@ export function registerExplorationBudgetCard(pi: ExtensionAPI) {
 				typeof facts?.textBytes !== "number"
 			)
 				return undefined;
-			const { lookups, textBytes } = facts;
-			const head = `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", "Exploration budget"))} ${t.fg("dim", `· ${lookups} lookups · ${formatBytes(textBytes)} → continue discovery in an explore child`)}`;
-			return new RuntimeNoticeCard(message, head, expanded, t);
+			const label = `${t.fg("warning", "◆")} ${t.bold(t.fg("muted", "Exploration budget"))}`;
+			const metric = `· ${facts.lookups} lookups · ${formatBytes(facts.textBytes)}`;
+			const action = "continue discovery in an explore child";
+			return new RuntimeNoticeCard(
+				message,
+				{
+					head: `${label} ${t.fg("dim", metric)}`,
+					action,
+					line: `${label} ${t.fg("dim", `${metric} → ${action}`)}`,
+				},
+				expanded,
+				t,
+			);
 		},
 	);
 }
