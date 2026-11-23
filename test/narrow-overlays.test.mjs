@@ -447,10 +447,10 @@ const overlongModel = "openai-codex/gpt-6-astra-preview-2026-11-extended";
 
 test("model profiles end a model id cut by the row with …, and show a model id that fits whole, below 60 terminal columns", async (t) => {
 	const cut = {
-		44: "│ ▸ worker openai-codex/gpt-6-astra-pr… ›  │",
-		48: "│ ▸ worker openai-codex/gpt-6-astra-previe… ›  │",
-		52: "│ ▸ worker openai-codex/gpt-6-astra-preview-20… ›  │",
-		59: "│ ▸ worker openai-codex/gpt-6-astra-preview-2026-11-e… ›  │",
+		44: "│   worker openai-codex/gpt-6-astra-pr… ›  │",
+		48: "│   worker openai-codex/gpt-6-astra-previe… ›  │",
+		52: "│   worker openai-codex/gpt-6-astra-preview-20… ›  │",
+		59: "│   worker openai-codex/gpt-6-astra-preview-2026-11-e… ›  │",
 	};
 	for (const columns of narrowColumns) {
 		const screen = piScreen(t, columns, { theme });
@@ -467,7 +467,7 @@ test("model profiles end a model id cut by the row with …, and show a model id
 	profiles.panel.handleInput("\r");
 	assert.equal(
 		plain(profiles.panel.render(59))[4],
-		`│ ▸ worker${" ".repeat(14)}nan/mimo-v2.5 · thinking: high ›  │`,
+		`│   worker${" ".repeat(14)}nan/mimo-v2.5 · thinking: high ›  │`,
 	);
 });
 
@@ -475,7 +475,7 @@ const longDescription =
 	"Compact the context when it fills up so the session can keep working without losing the thread of the conversation so far.";
 
 const settingsHints = [
-	"│   Type search  |  Enter/Space change     │",
+	"│   Type search · Enter/Space change       │",
 	"│   Esc cancel                             │",
 ];
 
@@ -662,7 +662,7 @@ test("in a narrow fullscreen dock, the Settings Theme submenu keeps the theme ch
 	assert.equal(lines.length, 12);
 	assert.match(lines[2], /^┌─ Settings › Theme ─+ \[×\] ─┐$/);
 	assert.deepEqual(lines.slice(9, 12), [
-		`│ ${"  Enter select  |  Esc go back".padEnd(40)} │`,
+		`│ ${"  Enter select · Esc go back".padEnd(40)} │`,
 		`└${"─".repeat(42)}┘`,
 		"FOOTER",
 	]);
@@ -699,7 +699,7 @@ test("in a narrow fullscreen dock crowded by running children and a Todo, the au
 	assert.ok(bottom > top, lines.join("\n"));
 	assert.equal(
 		lines[bottom - 1],
-		`│ ${"  Enter select  |  Esc go back".padEnd(40)} │`,
+		`│ ${"  Enter select · Esc go back".padEnd(40)} │`,
 	);
 	const row = lines.findIndex((line) => line.startsWith("│  ○ light "));
 	assert.ok(row > top && row < bottom - 1, lines.join("\n"));
@@ -798,6 +798,79 @@ test("in a narrow fullscreen dock crowded by running children and a Todo, tall s
 			);
 		}
 	}
+});
+
+const framed = (row, inner = 40) => `│ ${row.padEnd(inner)} │`;
+
+test("below 60 terminal columns settings read their hints Key action joined by · from the left, and only the selected row carries ▸", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	densityTerminal(t, 44);
+	const lines = plain(settingsSelector().selector.render(44));
+	assert.deepEqual(lines.slice(3, 6), [
+		`│ ${"▸ Setting 0".padEnd(35)}on    │`,
+		`│ ${"  Setting 1".padEnd(35)}on    │`,
+		`│ ${"  Setting 2".padEnd(35)}on    │`,
+	]);
+	assert.equal(lines.filter((line) => line.includes("▸")).length, 1);
+	assert.deepEqual(lines.slice(-3, -1), [
+		framed("  Type search · Enter/Space change"),
+		framed("  Esc cancel"),
+	]);
+});
+
+test("below 60 terminal columns the config guide, model profiles and the Advisor picker read their hints Key action joined by · from the left, and only the selected row carries ▸", async (t) => {
+	const screen = piScreen(t, 44, { theme });
+	const guide = await openGuide(t, screen);
+	assert.deepEqual(plain(guide.panel.render(44)).slice(-3, -1), [
+		framed("↑/↓ move · Space toggle"),
+		framed("Tab go to apply · Esc close"),
+	]);
+	await guide.close();
+
+	const profiles = await openProfiles(t, screen, {
+		daily: { worker: { model: longModel, thinking: "xhigh" } },
+		weekly: { worker: { model: longModel, thinking: "high" } },
+	});
+	const lines = plain(profiles.panel.render(44));
+	assert.deepEqual(lines.slice(3, 5), [
+		framed(`▸ daily${" ".repeat(22)}● active › `),
+		framed(`  weekly${" ".repeat(29)} › `),
+	]);
+	assert.deepEqual(lines.slice(-4, -1), [
+		framed("Enter open · a activate · c create"),
+		framed("d duplicate · r rename · x delete"),
+		framed("s save · Esc exit"),
+	]);
+	profiles.close();
+
+	const advisor = openAdvisorPicker(t, screen);
+	assert.deepEqual(plain(advisor.panel.render(44)).slice(-3, -1), [
+		framed("type filter · ↑/↓ choose · Enter select"),
+		framed("Esc close"),
+	]);
+	advisor.close();
+});
+
+test("a click on a narrow Fleet hint reaches its action, and a click on the separator beside it does not", (t) => {
+	freezeClock(t);
+	const screen = piScreen(t, 44, { rows: 24, theme });
+	const fleet = openFleet(t, screen);
+	const lines = plain(fleet.panel.render(44));
+	const y = lines.findIndex((line) => line.includes("j/k move"));
+	assert.deepEqual(lines.slice(y, y + 2), [
+		framed("j/k move · Enter detail · s/c cancel"),
+		framed("q close"),
+	]);
+	const enter = lines[y].indexOf("Enter");
+	assert.equal(fleet.panel.handleMouse(click(enter - 1, y, 44, 24)), undefined);
+	assert.equal(plain(fleet.panel.render(44))[y], lines[y]);
+	assert.deepEqual(fleet.panel.handleMouse(click(enter, y, 44, 24)), {
+		handled: true,
+	});
+	assert.ok(
+		plain(fleet.panel.render(44)).some((line) => line.includes("Esc back")),
+	);
 });
 
 test("narrow settings end a value cut by the row with …", (t) => {

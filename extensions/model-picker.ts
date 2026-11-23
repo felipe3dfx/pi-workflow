@@ -153,7 +153,10 @@ export function createScreenFrame(
 					? [...warning.map((line) => theme.fg("warning", line)), ""]
 					: []),
 			];
-			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
+			const tail = [
+				"",
+				...hintRows(theme, screen.hints, inner, { narrow }).lines,
+			];
 			const room = Math.max(0, terminalRows() - 2);
 			const space = room - head.length - tail.length;
 			visible = Math.max(1, Math.min(VISIBLE_ROWS, space - 3));
