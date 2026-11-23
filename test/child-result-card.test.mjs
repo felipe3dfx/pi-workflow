@@ -836,6 +836,61 @@ test("below 60 terminal columns a completed card without a Verdict reads complet
 	assert.ok(passed.render(43)[1].includes(theme().fg("success", "pass")));
 });
 
+test("below 60 terminal columns a collapsed card's reason takes up to 2 lines, the second cut with …, a tap on it opens the card, and 60 columns or more keeps one line", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const reason = (text) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: {
+				...details,
+				verdict: "blocked",
+				result: { verdict: "blocked", reason: text },
+			},
+		});
+	const long = reason(
+		"Database access is missing because the staging credentials expired yesterday and nobody renewed them",
+	);
+	const narrow = [
+		"",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
+		"  Database access is missing because the",
+		"  staging credentials expired yesterday a…",
+	];
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.deepEqual(
+		plain(reason("Database access is missing because the staging role"), 43),
+		[
+			"",
+			"◆ Subagent worker 5636 blocked  1m 02s   ›",
+			"  Database access is missing because the",
+			"  staging role",
+		],
+	);
+	terminal.columns = 60;
+	const wide = [
+		"",
+		"   ◆ Subagent worker 5636 blocked  1m 02s",
+		"     Database access is missing because the staging c...",
+	];
+	assert.deepEqual(plain(long, 59), wide);
+	terminal.columns = 59;
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.ok(
+		long.handleMouse({
+			type: "click",
+			button: "left",
+			x: 2,
+			y: 3,
+			width: 43,
+			height: 4,
+		})?.handled,
+	);
+	assert.ok(plain(long, 43).includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.ok(plain(long, 59).at(-1).includes("alt+a"));
+});
+
 const blocked = {
 	...details,
 	verdict: "blocked",

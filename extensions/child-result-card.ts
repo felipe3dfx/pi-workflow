@@ -155,6 +155,15 @@ function header(
 	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
 }
 
+// Narrow, the reason takes up to 2 lines, the second cut with … (NS-21); wide keeps one.
+function reasonLines(why: string, inner: number, narrow: boolean) {
+	if (!narrow) return [why];
+	const [first = "", ...rest] = wrapTextWithAnsi(why, inner);
+	return rest.length === 0
+		? [first]
+		: [first, truncateToWidth(rest.join(" "), inner, "…")];
+}
+
 export function clean(text: string) {
 	return terminalSafeBlock(text.trim());
 }
@@ -328,7 +337,12 @@ class ResultCard implements Component {
 				if (open || this.question) lines.push(...bodyLines(this.body, inner));
 				else {
 					const why = reason(this.card);
-					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
+					if (why)
+						lines.push(
+							...reasonLines(terminalSafeLine(why), inner, narrow).map((line) =>
+								t.fg("dim", line),
+							),
+						);
 				}
 				if (open)
 					lines.push(...instruction("alt+a  open in subagents view", inner));
