@@ -924,6 +924,81 @@ test("a wide two-line row too tight for its Run state and time keeps role, id, a
 	);
 });
 
+test("a saturated two-line row at 80 columns keeps glyph, role, and id, drops the Run state word only when it does not fit, and keeps the full time", () => {
+	const cells = listCells(open(timed(), { rows: 40 }).lines(80));
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.ok(at > 0, cells.join("\n"));
+	assert.match(cells[at], /^ {2}▸ ✓ worker 5636 +$/);
+	assert.match(cells[at + 1], / 3\.2s $/);
+	assert.match(cells[at + 2], /^ {4}✗ worker 27c1 +failed $/);
+	assert.match(cells[at + 3], / 3\.2s $/);
+});
+
+test("a selected row whose Steer mark, time, and tokens exactly fill the second line shows them all", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const child = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const sessions = fakeSessions([child], {
+		[child.id]: { entries: [scripted("s1", 1, 0)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(104));
+	const at = findListRowIndex(cells, "explore 5636");
+	assert.match(cells[at], /^ {2}▸ ◐ explore 5636 +running $/);
+	assert.equal(cells[at + 1], "  1 steer pending · 3.2s · 1 tok ");
+});
+
+test("a saturated second line keeps the full time, then compacts Steer labels, then drops cost, then tokens", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const pending = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const undelivered = record("27c1", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const bare = record("a809", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const usage = { entries: [scripted("s1", 1000, 0.01)] };
+	const sessions = fakeSessions([pending, undelivered, bare], {
+		[pending.id]: usage,
+		[undelivered.id]: usage,
+		[bare.id]: { entries: [] },
+	});
+	const expected = {
+		80: ["1 pending · 3.2s", "1 undelivered · 3.2s", "1 undelivered · 3.2s"],
+		100: [
+			"1 pending · 3.2s · 1.0k tok",
+			"1 undelivered · 3.2s",
+			"1 steer undelivered · 3.2s",
+		],
+		104: [
+			"1 pending · 3.2s · 1.0k tok",
+			"1 undelivered · 3.2s",
+			"1 steer undelivered · 3.2s",
+		],
+	};
+	for (const [width, tails] of Object.entries(expected)) {
+		const cells = listCells(open(sessions, { rows: 40 }).lines(Number(width)));
+		["explore 5636", "worker 27c1", "worker a809"].forEach((name, i) => {
+			const second = cells[findListRowIndex(cells, name) + 1];
+			assert.ok(second.endsWith(` ${tails[i]} `), `${width}: ${second}`);
+		});
+	}
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
