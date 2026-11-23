@@ -387,16 +387,21 @@ function markdownTransform(
 
 const COMPACT = Symbol.for("pi-workflow:chrome-messages:compact-markdown");
 
+// The mark keeps the density of the last render, which Pi's render cache
+// does not key on.
+type CompactMark = { narrow?: boolean };
+
+function compactMark(markdown: unknown) {
+	return (markdown as Record<symbol, CompactMark> | undefined)?.[COMPACT];
+}
+
 function markCompactMarkdown(markdown: Markdown) {
-	(markdown as unknown as Record<symbol, boolean>)[COMPACT] = true;
+	(markdown as unknown as Record<symbol, CompactMark>)[COMPACT] = {};
 	return markdown;
 }
 
 function shouldCompactMarkdown(markdown: unknown) {
-	return (
-		narrowScreen() &&
-		(markdown as Record<symbol, boolean> | undefined)?.[COMPACT] === true
-	);
+	return narrowScreen() && compactMark(markdown) !== undefined;
 }
 
 function hasVisibleText(content: AssistantMessage["content"][number]) {
@@ -901,6 +906,20 @@ function compactList(
 	return lines;
 }
 
+function wrapMarkdownRender(original: PatchMethod) {
+	const render = original as (this: Markdown, width: number) => string[];
+	return function (this: Markdown, width: number) {
+		const mark = compactMark(this);
+		if (mark) {
+			const narrow = narrowScreen();
+			if (mark.narrow !== undefined && mark.narrow !== narrow)
+				this.invalidate();
+			mark.narrow = narrow;
+		}
+		return render.call(this, width);
+	} as PatchMethod;
+}
+
 function wrapRenderList(original: PatchMethod) {
 	return function (
 		this: MarkdownSelf,
@@ -1098,6 +1117,12 @@ const targets: PatchTarget[] = [
 		proto: Markdown.prototype,
 		name: "renderToken",
 		create: wrapRenderToken,
+		replaces: false,
+	},
+	{
+		proto: Markdown.prototype,
+		name: "render",
+		create: wrapMarkdownRender,
 		replaces: false,
 	},
 	{

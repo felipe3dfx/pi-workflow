@@ -58,6 +58,7 @@ const pristine = {
 	bashRender: Object.hasOwn(BashExecutionComponent.prototype, "render"),
 	renderToken: Markdown.prototype.renderToken,
 	renderList: Markdown.prototype.renderList,
+	markdownRender: Markdown.prototype.render,
 };
 
 function isPristine() {
@@ -71,7 +72,8 @@ function isPristine() {
 		Object.hasOwn(BashExecutionComponent.prototype, "render") ===
 			pristine.bashRender &&
 		Markdown.prototype.renderToken === pristine.renderToken &&
-		Markdown.prototype.renderList === pristine.renderList
+		Markdown.prototype.renderList === pristine.renderList &&
+		Markdown.prototype.render === pristine.markdownRender
 	);
 }
 
@@ -1563,6 +1565,34 @@ test("the same assistant Markdown switches between Pi's layout and the compact o
 	assert.deepEqual(trimmed(component.render(59)), wideNested);
 	terminal.columns = 59;
 	assert.deepEqual(trimmed(component.render(43)), narrowNested);
+	// 62/61 and 59/58 give Pi the same 55-column Markdown width.
+	const fresh = (columns, width) => {
+		terminal.columns = columns;
+		const other = markdownAnswer(plainMarkdown);
+		other.updateContent(
+			assistant([{ type: "text", text: nested }], { timestamp: undefined }),
+			false,
+		);
+		return trimmed(other.render(width));
+	};
+	const wide = fresh(62, 61);
+	const narrow = fresh(59, 58);
+	assert.ok(
+		wide.includes("   ```ts") &&
+			narrow.includes("  ▎ const answer = compute(1, 2);"),
+	);
+	for (const [columns, width, expected] of [
+		[62, 61, wide],
+		[59, 58, narrow],
+		[62, 61, wide],
+	]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			trimmed(component.render(width)),
+			expected,
+			`${columns}/${width}`,
+		);
+	}
 });
 
 test("patching the messages twice compacts assistant Markdown once and one restore gives Pi's Markdown back", (t) => {
