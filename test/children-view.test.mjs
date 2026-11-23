@@ -1027,6 +1027,23 @@ test("a saturated second line keeps a step that fits beside its time and usage",
 	);
 });
 
+test("a saturated row whose time, tokens, and cost fit on its second line keeps the cost", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const done = record("5636", {
+		state: "completed",
+		startedAt: now - 65_000,
+		endedAt: now,
+		text: "Done.",
+	});
+	const sessions = fakeSessions([done], {
+		[done.id]: { entries: [scripted("s1", 1, 0.01)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(100));
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.match(cells[at], /^ {2}▸ ✓ worker 5636 +completed $/);
+	assert.ok(cells[at + 1].endsWith(" 1m 05s · 1 tok · $0.01 "), cells[at + 1]);
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;
