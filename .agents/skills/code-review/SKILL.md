@@ -4,7 +4,7 @@ description: "Trigger: review a ticket's diff inside the implementation loop, or
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "3.6.0"
+  version: "3.8.0"
   provenance: derived
 ---
 
@@ -34,7 +34,7 @@ This skill never changes the reviewed tree: it reads the diff, the files around 
 ## Execution Steps
 
 1. Pin the fixed point: record it, the head, and the commit list since it.
-2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, by identifier, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, to check those tables against.
+2. Collect each axis's sources: for Standards, [team standards and smell baseline](references/standards.md) and the repository's `docs/agents/coding-standards.md` when it exists, plus its root instruction file, to check, not as standards; for Spec, the ticket and its specification when one exists, or the specification and every child ticket for a parent integration branch, by identifier, plus the published Work Contract and decision comments, never a scope note written by whoever invoked the review; for Valuable Tests, [the valuable-tests rubric](../tdd/references/valuable-tests.md), the scratch evidence file, the repository's `docs/agents/quality.md`, the seams and coverage lines agreed before the first test, from the requirement-tracing table or coverage lines its caller hands over (else from the ticket), and the same tickets as Spec, to check those tables against.
 3. Dispatch each axis to its own context, in parallel when the harness allows. Give each one the fixed point, the head, the commit list, the delta and its prior findings when corrective, its register entries, its own sources by path or identifier to read fresh, and its brief below. An axis receives no other axis's sources or findings.
 4. Assemble the report from the axis reports, verbatim or lightly cleaned.
 
