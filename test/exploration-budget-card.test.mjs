@@ -168,6 +168,16 @@ test("below 60 terminal columns a narrower exploration notice cuts its title wit
 		"  → continue discovery in an",
 		"  explore child",
 	]);
+	const head = (columns, counts) => {
+		densityTerminal(t, columns);
+		return plain(notice(t, counts), columns - 1)[1];
+	};
+	assert.equal(
+		head(26, { lookups: 4, textBytes: 101_000 }),
+		"◆ … 4 lookups · 101 KB ›",
+	);
+	assert.equal(head(25, facts), "◆ … 4 lookups · 47 KB ›");
+	assert.equal(head(21, facts), "4 lookups · 47 KB ›");
 });
 
 test("at 60 and 100 terminal columns the exploration notice renders the base's bytes, collapsed and expanded, also after crossing 60 columns both ways", (t) => {

@@ -36,7 +36,6 @@ export type NoticeParts = {
 };
 
 const lane = "  ";
-const minTitle = 2;
 
 // Adjacent spans of one tone share one colour run.
 function paint(t: Theme, spans: Span[]) {
@@ -111,16 +110,14 @@ export class RuntimeNoticeCard implements Component {
 		);
 	}
 
-	// The metric outranks the title: the title is cut first while a cut title
-	// still leaves room for the whole metric.
+	// The metric outranks the title: the title is cut with … down to one cell,
+	// and with no cell left the metric stands alone.
 	narrowHead(room: number) {
 		const { title, metric } = this.parts;
+		const painted = paint(this.theme, [metric]);
 		const titleRoom = room - visibleWidth(`◆  ${metric.text}`);
-		const shown =
-			visibleWidth(title) > titleRoom && titleRoom >= minTitle
-				? truncateToWidth(title, titleRoom, "…")
-				: title;
-		return `${this.label(shown)} ${paint(this.theme, [metric])}`;
+		if (titleRoom < 1) return painted;
+		return `${this.label(truncateToWidth(title, titleRoom, "…"))} ${painted}`;
 	}
 
 	narrow(outer: number) {

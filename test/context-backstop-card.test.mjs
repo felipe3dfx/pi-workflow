@@ -158,15 +158,17 @@ test("below 60 terminal columns the backstop states the advisor on a dim row of 
 	assert.ok(raw[3].includes(theme().fg("dim", "advisor not consulted")));
 });
 
-test("below 60 terminal columns a backstop narrower than its row cuts the head with … before › and wraps the action whole", (t) => {
+test("below 60 terminal columns a backstop narrower than its row cuts its title with … down to one cell, then keeps the usage alone before ›, and wraps the action whole", (t) => {
 	densityTerminal(t, 44);
 	assert.deepEqual(plain(card(t, { ...facts, advisor: { turnsAgo: 3 } }), 24), [
 		"",
-		"◆ Context 156K / 150… ›",
+		"156K / 150K ▰▱▱▱▱▱▱▱  ›",
 		"  → delegate the next",
 		"  bounded unit",
 		"  advisor ✓ 3 turns ago",
 	]);
+	densityTerminal(t, 28);
+	assert.equal(plain(card(t, facts), 27)[1], "◆ … 156K / 150K ▰▱▱▱▱▱▱▱ ›");
 });
 
 test("below 60 terminal columns a backstop with any usable cell keeps › on the head's last cell and the whole action across its rows, and one with none paints nothing", (t) => {
