@@ -251,8 +251,11 @@ class ResultCard implements Component {
 	cardLines(outer: number) {
 		const t = this.theme;
 		const open = this.open();
-		const pinned = !open && narrowScreen();
+		const narrow = narrowScreen();
+		const pinned = !open && narrow;
 		const hint = pinned ? affordance(t) : expandHint(t, this.expanded);
+		const instruction = (text: string, inner: number) =>
+			narrow ? wrapTextWithAnsi(t.fg("dim", text), inner) : [t.fg("dim", text)];
 		return frame(
 			outer,
 			header(t, this.card, this.question, open),
@@ -260,7 +263,9 @@ class ResultCard implements Component {
 			(inner) => {
 				const lines: string[] = [];
 				if (open && this.card.task)
-					lines.push(t.fg("dim", `Task ${terminalSafeLine(this.card.task)}`));
+					lines.push(
+						...instruction(`Task ${terminalSafeLine(this.card.task)}`, inner),
+					);
 				if (open && this.card.result)
 					for (const line of resultFieldLines(this.card.result))
 						lines.push(t.fg("dim", terminalSafeLine(line)));
@@ -269,7 +274,8 @@ class ResultCard implements Component {
 					const why = reason(this.card);
 					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
 				}
-				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
+				if (open)
+					lines.push(...instruction("alt+a  open in subagents view", inner));
 				return lines;
 			},
 			assistantInset,

@@ -682,6 +682,32 @@ test("below 60 terminal columns a result head too long for its row is cut with �
 	}
 });
 
+test("below 60 terminal columns an open result card too narrow for its task and navigation instructions wraps them whole", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	component.setExpanded(true);
+	const rows = plain(component, 20).slice(2);
+	for (const row of rows) assert.match(row, /^( {2}\S|$)/, rows.join("\n"));
+	const text = rows.join(" ").replace(/\s+/g, " ");
+	assert.ok(text.includes("Task Run sleep 60 to wait 60 seconds"), text);
+	assert.ok(text.includes("alt+a open in subagents view"), text);
+});
+
+test("below 60 terminal columns the Parent answer card stays open with its answer and carries no ›", (t) => {
+	cards(t);
+	densityTerminal(t, 44);
+	const parent = answerCard(
+		{ id, question: 1, answer: "Use PostgreSQL." },
+		theme(),
+	);
+	assert.deepEqual(plain(parent, 43), [
+		"◆ Parent → 5636 · answer 1",
+		"  Use PostgreSQL.",
+	]);
+	assert.equal(parent.handleMouse, undefined);
+});
+
 test("below 60 terminal columns an open result card cuts its long head with … instead of ...", (t) => {
 	const { card } = cards(t);
 	densityTerminal(t, 44);
@@ -746,4 +772,22 @@ test("one result card crossing 60 terminal columns in both directions gains › 
 	);
 	terminal.columns = 60;
 	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
+});
+
+test("one open result card crossing 60 terminal columns in both directions keeps its expanded body on each side", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
+	terminal.columns = 59;
+	const narrow = plain(component, 58);
+	assert.ok(narrow.includes("  Task Run sleep 60 to wait 60 seconds"));
+	assert.ok(narrow.includes("  Done; I ran sleep 60 and waited 60 seconds."));
+	assert.ok(narrow.includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
 });

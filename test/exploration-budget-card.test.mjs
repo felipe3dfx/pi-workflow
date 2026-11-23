@@ -185,10 +185,9 @@ test("at 60 and 100 terminal columns the exploration notice renders the base's b
 				),
 			);
 		terminal.columns = 59;
-		assert.equal(
-			plain(scenarios.expanded, 58)[2],
-			"  → continue discovery in an explore child",
-		);
+		const narrow = plain(scenarios.expanded, 58);
+		assert.equal(narrow[2], "  → continue discovery in an explore child");
+		assert.match(narrow[3], /^ {2}Exploration budget: 4 tracked lookups/);
 	}
 });
 
