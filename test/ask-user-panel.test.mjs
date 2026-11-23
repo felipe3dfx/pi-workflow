@@ -2105,6 +2105,69 @@ test("at 43x31 a choice that costs the same row as its more row is shown instead
 	await pending;
 });
 
+test("at 43x31 a six-line question pages with PageDown so the focused description stays visible within half the terminal height", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-six-lines",
+		{
+			question: sixLineQuestion,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Gradual rollout", description: "Track errors." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+			multiple: true,
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const options = [
+		"▸ [ ] 2  Gradual rollout",
+		"         Track errors.",
+		"         ↑ 1 · ↓ 1 more",
+		"      z  Type your answer",
+		"↑/↓ move · Space mark",
+		"Enter select at least one",
+		"z edit free text · Esc panel stays open",
+		"Shift+X dismiss",
+	];
+	send(DOWN);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"The staging rollout passed but two",
+				"background jobs still use the old",
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"PgDn ↓ 2 more",
+				...options,
+			],
+			39,
+		),
+	);
+	send("\x1b[6~");
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"use so we can deploy today without",
+				"interrupting writes?",
+				"PgUp ↑ 2 more",
+				...options,
+			],
+			39,
+		),
+	);
+	send("X");
+	await pending;
+});
+
 test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
 	densityTerminal(t, 43);
 	const tool = createAskUserChoiceTool(createFooterHints());

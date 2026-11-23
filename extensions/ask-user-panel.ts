@@ -113,6 +113,27 @@ async function askPanel(
 				const marked = new Set<number>();
 				let index = 0;
 				let mode: "browse" | "edit" = options.length === 0 ? "edit" : "browse";
+				// Narrow, a question bounded below half the height pages by its visible lines.
+				let questionTop = 0;
+				let questionPage = 0;
+				let questionLast = 0;
+				const pageKey = (
+					binding: "tui.select.pageUp" | "tui.select.pageDown",
+				) => {
+					const key = keybindings.getKeys(binding)[0];
+					if (!key) return "";
+					const named = key
+						.split("+")
+						.map((part) =>
+							part === "pageUp"
+								? "PgUp"
+								: part === "pageDown"
+									? "PgDn"
+									: part.charAt(0).toUpperCase() + part.slice(1),
+						)
+						.join("+");
+					return `${named} `;
+				};
 
 				const isFreeTextRow = (i: number) => i === freeTextIndex;
 
@@ -199,6 +220,7 @@ async function askPanel(
 					render(width) {
 						// Below 60 columns ADR 0031 amends the look and the hints; ADR 0019 keeps the rest.
 						const narrow = narrowScreen();
+						questionPage = 0;
 						const edge = inputMargin(width);
 						const frameWidth = width - edge * 2;
 						const framed = frameWidth >= minFrame;
@@ -374,17 +396,38 @@ async function askPanel(
 						};
 						// One narrow row plan sizes and renders the panel within half the terminal
 						// height (ADR 0019): the focused label and description come first, then
-						// blank rows go, then the two more rows share one.
+						// blank rows go, then the two more rows share one, then the question pages.
 						const narrowRows = () => {
-							if (options.length === 0)
-								return [freeRow, ...(inside.length > 0 ? ["", ...inside] : [])];
+							const cap = Math.floor(tui.terminal.rows / 2) - (framed ? 2 : 0);
+							const bounded = (reserved: number) => {
+								const room = cap - reserved;
+								if (questionLines.length <= room || room < 2)
+									return questionLines;
+								questionPage = room - 1;
+								questionLast = questionLines.length - questionPage;
+								questionTop = Math.min(Math.max(0, questionTop), questionLast);
+								const end = questionTop + questionPage;
+								const cue = [
+									questionTop > 0
+										? `${pageKey("tui.select.pageUp")}↑ ${questionTop}`
+										: "",
+									end < questionLines.length
+										? `${pageKey("tui.select.pageDown")}↓ ${questionLines.length - end}`
+										: "",
+								].filter(Boolean);
+								return [
+									...questionLines.slice(questionTop, end),
+									theme.fg("dim", `${cue.join(" · ")} more`),
+								];
+							};
+							if (options.length === 0) {
+								const controls = [
+									freeRow,
+									...(inside.length > 0 ? ["", ...inside] : []),
+								];
+								return [...bounded(controls.length), ...controls];
+							}
 							const gapsMax = inside.length > 0 ? 3 : 2;
-							const budget =
-								Math.floor(tui.terminal.rows / 2) -
-								(framed ? 2 : 0) -
-								questionLines.length -
-								1 -
-								inside.length;
 							const whole = (i: number) => {
 								const { label, below } = stack(i);
 								return label.length + below.length;
@@ -407,6 +450,10 @@ async function askPanel(
 									rows += i === index ? focused(i) : least(i);
 								return rows;
 							};
+							const question = bounded(
+								1 + inside.length + need(1, true, least),
+							);
+							const budget = cap - question.length - 1 - inside.length;
 							// The whole focused block first, then its label and first description row.
 							let plan = { gaps: 0, shared: true, visible: 1 };
 							search: for (const focused of [whole, least])
@@ -456,9 +503,9 @@ async function askPanel(
 							if (plan.gaps >= gapsMax) rows.push("");
 							rows.push(freeRow);
 							if (inside.length > 0 && plan.gaps >= 2) rows.push("");
-							return [...rows, ...inside];
+							return [...question, ...rows, ...inside];
 						};
-						if (narrow) body.push(...narrowRows());
+						if (narrow) body.splice(0, body.length, ...narrowRows());
 						else {
 							if (options.length > 0) {
 								const budget = Math.max(
@@ -528,6 +575,17 @@ async function askPanel(
 					},
 					invalidate() {},
 					handleInput(data: string) {
+						const pageUp = keybindings.matches(data, "tui.select.pageUp");
+						if (
+							questionPage > 0 &&
+							(pageUp || keybindings.matches(data, "tui.select.pageDown"))
+						) {
+							questionTop = Math.min(
+								Math.max(0, questionTop + (pageUp ? -1 : 1) * questionPage),
+								questionLast,
+							);
+							return;
+						}
 						if (mode === "edit") {
 							if (keybindings.matches(data, "tui.select.up")) {
 								mode = "browse";
