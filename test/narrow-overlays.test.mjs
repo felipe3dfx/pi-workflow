@@ -279,13 +279,18 @@ test("at 60 and 100 terminal columns the overlays and docked lists open at the b
 	}
 });
 
-test("at 60 and 100 terminal columns the Fleet view opens at the base's width and renders the base's bytes", async (t) => {
+test("at 60 and 100 terminal columns the Fleet view opens at the base's width and renders the base's bytes, on a tall and a short terminal", async (t) => {
 	freezeClock(t);
-	for (const columns of [60, 100]) {
-		const screen = piScreen(t, columns, { rows: 24, theme });
-		const fleet = openFleet(t, screen);
-		await screen.frame();
-		assert.deepEqual(shown(fleet), wideBytes.fleet[columns]);
+	for (const [rows, bytes] of [
+		[24, wideBytes.fleet],
+		[10, wideBytes.fleetShort],
+	]) {
+		for (const columns of [60, 100]) {
+			const screen = piScreen(t, columns, { rows, theme });
+			const fleet = openFleet(t, screen);
+			await screen.frame();
+			assert.deepEqual(shown(fleet), bytes[columns]);
+		}
 	}
 });
 
@@ -445,30 +450,44 @@ test("an open overlay keeps the width and padding it opened with while the termi
 
 const overlongModel = "openai-codex/gpt-6-astra-preview-2026-11-extended";
 
-test("model profiles end a model id cut by the row with …, and show a model id that fits whole, below 60 terminal columns", async (t) => {
-	const cut = {
-		44: "│   worker openai-codex/gpt-6-astra-pr… ›  │",
-		48: "│   worker openai-codex/gpt-6-astra-previe… ›  │",
-		52: "│   worker openai-codex/gpt-6-astra-preview-20… ›  │",
-		59: "│   worker openai-codex/gpt-6-astra-preview-2026-11-e… ›  │",
+const specialistProfiles = {
+	daily: {
+		explorer: { model: "anthropic/claude-opus-5-5", thinking: "high" },
+		worker: { model: overlongModel, thinking: "xhigh" },
+	},
+};
+const selectedBg = theme.bg("selectedBg", "\0").split("\0")[0];
+
+test("below 60 terminal columns model profiles show each specialist on two lines, role and thinking level first and the whole model second, cut with … only when it cannot fit", async (t) => {
+	const rows = {
+		43: [
+			`│ ▸ explorer${" ".repeat(22)}high ›  │`,
+			`│     anthropic/claude-opus-5-5${" ".repeat(10)} │`,
+			`│   worker${" ".repeat(23)}xhigh ›  │`,
+			"│     openai-codex/gpt-6-astra-preview-2… │",
+			`│   verifier${" ".repeat(27)}›  │`,
+			`│     inherits session model${" ".repeat(13)} │`,
+		],
+		59: [
+			`│ ▸ explorer${" ".repeat(38)}high ›  │`,
+			`│     anthropic/claude-opus-5-5${" ".repeat(26)} │`,
+			`│   worker${" ".repeat(39)}xhigh ›  │`,
+			`│     ${overlongModel}${" ".repeat(2)} │`,
+			`│   verifier${" ".repeat(43)}›  │`,
+			`│     inherits session model${" ".repeat(29)} │`,
+		],
 	};
-	for (const columns of narrowColumns) {
+	for (const columns of [43, 59]) {
 		const screen = piScreen(t, columns, { theme });
-		const profiles = await openProfiles(t, screen, {
-			daily: { worker: { model: overlongModel, thinking: "xhigh" } },
-		});
+		const profiles = await openProfiles(t, screen, specialistProfiles);
 		profiles.panel.handleInput("\r");
-		assert.equal(plain(profiles.panel.render(columns))[4], cut[columns]);
+		const raw = profiles.panel.render(columns);
+		assert.deepEqual(plain(raw).slice(3, 9), rows[columns]);
+		assert.deepEqual(
+			raw.slice(3, 9).map((line) => line.includes(selectedBg)),
+			[true, true, false, false, false, false],
+		);
 	}
-	const screen = piScreen(t, 59, { theme });
-	const profiles = await openProfiles(t, screen, {
-		daily: { worker: { model: "nan/mimo-v2.5", thinking: "high" } },
-	});
-	profiles.panel.handleInput("\r");
-	assert.equal(
-		plain(profiles.panel.render(59))[4],
-		`│   worker${" ".repeat(14)}nan/mimo-v2.5 · thinking: high ›  │`,
-	);
 });
 
 const longDescription =
@@ -907,6 +926,103 @@ test("a click on a narrow Fleet row reaches that row, and a click on its padding
 		handled: true,
 	});
 	assert.equal(row(), `│ ▸ ◐ worker a809${" ".repeat(12)}running · 12s │`);
+});
+
+const shortFleet = (inner) => [
+	`│ ${"▸ ◐ worker 5636".padEnd(inner - 13)}running · 12s │`,
+	`│ ${"    bash npm test".padEnd(inner)} │`,
+	`│ ${"  ◐ worker a809".padEnd(inner - 13)}running · 12s │`,
+	`│ ${"    bash npm test".padEnd(inner)} │`,
+];
+
+test("below 60 terminal columns a short Fleet keeps every row on two lines, identity and state first, detail and usage second", (t) => {
+	freezeClock(t);
+	for (const columns of [43, 59]) {
+		const screen = piScreen(t, columns, { rows: 10, theme });
+		const lines = plain(openFleet(t, screen).panel.render(columns));
+		assert.deepEqual(lines.slice(2, 6), shortFleet(columns - 4));
+	}
+});
+
+test("a click on the second line of a short narrow Fleet row reaches that row, and a click on its padding does not", (t) => {
+	freezeClock(t);
+	const screen = piScreen(t, 44, { rows: 10, theme });
+	const fleet = openFleet(t, screen);
+	const frame = () => plain(fleet.panel.render(44)).slice(2, 6);
+	assert.deepEqual(frame(), shortFleet(40));
+	assert.equal(fleet.panel.handleMouse(click(1, 5, 44, 10)), undefined);
+	assert.deepEqual(frame(), shortFleet(40));
+	assert.deepEqual(fleet.panel.handleMouse(click(2, 5, 44, 10)), {
+		handled: true,
+	});
+	assert.equal(frame()[2], `│ ${"▸ ◐ worker a809".padEnd(27)}running · 12s │`);
+});
+
+test("an open Fleet and model profiles keep their row layout and selection while the terminal crosses 60 columns either way, and lay out again when reopened", async (t) => {
+	freezeClock(t);
+	// Short enough for one-line wide Fleet rows, tall enough for every specialist.
+	const screen = piScreen(t, 59, { rows: 15, theme });
+	const openBoth = async () => {
+		const fleet = openFleet(t, screen);
+		const profiles = await openProfiles(t, screen, specialistProfiles);
+		profiles.panel.handleInput("\r");
+		fleet.panel.handleInput("j");
+		profiles.panel.handleInput(keys.down);
+		return { fleet, profiles };
+	};
+	const frames = async ({ fleet, profiles }) => {
+		await screen.frame();
+		return {
+			fleet: plain(shown(fleet).lines).slice(2, 6),
+			profiles: plain(shown(profiles).lines).slice(3, 7),
+		};
+	};
+	const closeBoth = ({ fleet, profiles }) => {
+		fleet.close();
+		profiles.close();
+	};
+
+	const narrow = await openBoth();
+	const twoLines = await frames(narrow);
+	assert.equal(
+		twoLines.fleet[2],
+		`│ ${"▸ ◐ worker a809".padEnd(42)}running · 12s │`,
+	);
+	assert.equal(twoLines.fleet[3], `│ ${"    bash npm test".padEnd(55)} │`);
+	assert.equal(twoLines.profiles[2], `│ ▸ worker${" ".repeat(39)}xhigh ›  │`);
+	assert.equal(
+		twoLines.profiles[3],
+		`│     ${overlongModel}${" ".repeat(2)} │`,
+	);
+	screen.terminal.columns = 60;
+	assert.deepEqual(await frames(narrow), twoLines);
+	closeBoth(narrow);
+
+	const wide = await openBoth();
+	const oneLine = await frames(wide);
+	assert.match(
+		oneLine.fleet[0],
+		/^ │ {4}◐ worker 5636 bash npm test +running · 12s {2}│$/,
+	);
+	assert.match(
+		oneLine.fleet[1],
+		/^ │ {2}▸ ◐ worker a809 bash npm test +running · 12s {2}│$/,
+	);
+	assert.equal(
+		oneLine.profiles[1],
+		"│  ▸ worker openai-codex/gpt-6-astra-p ›   │",
+	);
+	screen.terminal.columns = 59;
+	// Pi clamps the wide Fleet to the 59 columns left, one column narrower.
+	const shrunk = await frames(wide);
+	assert.deepEqual(shrunk.profiles, oneLine.profiles);
+	assert.match(
+		shrunk.fleet[1],
+		/^ │ {2}▸ ◐ worker a809 bash npm test +running · 12s {2}│$/,
+	);
+	closeBoth(wide);
+
+	assert.deepEqual(await frames(await openBoth()), twoLines);
 });
 
 test("the subagents box ends its 8-row cap with … N more · Alt+A below 60 terminal columns, across 59/60 crossings both ways", (t) => {

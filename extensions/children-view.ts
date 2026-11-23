@@ -78,6 +78,7 @@ import {
 	legacyDurationWidth,
 	minThoughtMs,
 	narrowScreen,
+	pinRight,
 	spread,
 } from "./visual-language.ts";
 
@@ -1455,7 +1456,9 @@ function createChildrenView(
 		focused: boolean,
 	) {
 		const now = Date.now();
-		const two = rows >= twoLineRows;
+		// Below 60 columns every row takes two lines, however short the terminal, and a cut ends with ….
+		const two = narrow || rows >= twoLineRows;
+		const pair = narrow ? pinRight : spread;
 		const lines: string[] = [];
 		const ids: (string | undefined)[] = [];
 		let section: string | undefined;
@@ -1567,8 +1570,8 @@ function createChildrenView(
 					(budgets.at(-1) ?? width) - visibleWidth(gap) - visibleWidth(time);
 				return `${truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…")}${gap}${theme.fg("dim", time)}`;
 			};
-			// The whole head and its gap come first where the base's whole-second time kept them, and on narrow
-			// screens; otherwise, and when nothing fits beside them, the tail alone takes the row as before.
+			// The whole head and its gap come first where the base's whole-second time kept them; otherwise, and
+			// when nothing fits beside them, the tail alone takes the row as before.
 			const grown =
 				item.live && child.state !== "queued"
 					? visibleWidth(clock) -
@@ -1577,7 +1580,6 @@ function createChildrenView(
 						)
 					: 0;
 			const kept =
-				narrow ||
 				visibleWidth(head) + 1 + visibleWidth(right([clock])) - grown <= width;
 			const tail =
 				[[state, ...spend], [state], [clock]]
@@ -1605,7 +1607,7 @@ function createChildrenView(
 			const first = () =>
 				visibleWidth(head) + 1 + visibleWidth(child.state) > width
 					? head
-					: spread(head, theme.fg("dim", child.state), width);
+					: pair(head, theme.fg("dim", child.state), width);
 			const second = () => {
 				const time = runTime(child, now);
 				const payload = fit(
@@ -1618,15 +1620,15 @@ function createChildrenView(
 				const free = width - visibleWidth(payload);
 				const room = free - 5;
 				return room >= Math.min(visibleWidth(detail), 4)
-					? spread(`    ${detail}`, payload, width)
+					? pair(`    ${detail}`, payload, width)
 					: `${" ".repeat(Math.max(0, free))}${payload}`;
 			};
 			const shown = two
 				? timeOnSecondLine
 					? [first(), second()]
 					: [
-							spread(head, theme.fg("dim", state), width),
-							spread(`    ${detail}`, right(spend), width),
+							pair(head, theme.fg("dim", state), width),
+							pair(`    ${detail}`, right(spend), width),
 						]
 				: [
 						spread(

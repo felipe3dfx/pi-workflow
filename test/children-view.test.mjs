@@ -977,9 +977,9 @@ test("a one-line row too tight for its Steer mark and time keeps the full time a
 	assert.match(later, / 1 pending 1m 05s $/, minuteCells.join("\n"));
 });
 
-test("a narrow one-line row keeps its child id when a single space before the time leaves room for the whole Steer label", (t) => {
+test("a short narrow Fleet row keeps its identity and Run state on the first line and its detail, cut with …, beside the whole Steer label on the second", (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
-	const terminal = densityTerminal(t, 44);
+	densityTerminal(t, 44);
 	const worker = record("5636", {
 		state: "completed",
 		startedAt: now - 3_240,
@@ -992,29 +992,11 @@ test("a narrow one-line row keeps its child id when a single space before the ti
 			rows: 10,
 		}).lines(44),
 	);
-	assert.ok(
-		cells.includes(" ▸ ✓ worker 5636 1 steer undelivered 3.2s "),
-		cells.join("\n"),
-	);
-	terminal.columns = 41;
-	const explore = record("5636", {
-		role: "explore",
-		startedAt: now - 3_240,
-		steering: ["focus on the parser"],
-	});
-	const exploreCells = listCells(
-		open(fakeSessions([explore], { [explore.id]: { entries: [] } }), {
-			rows: 10,
-		}).lines(41),
-	);
-	assert.ok(
-		exploreCells.some(
-			(cell) =>
-				cell.startsWith(" ▸ ◐ explore 5636 ") &&
-				cell.endsWith(" 1 steer pending 3.2s "),
-		),
-		exploreCells.join("\n"),
-	);
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.deepEqual(cells.slice(at, at + 2), [
+		" ▸ ✓ worker 5636         completed · 3.2s ",
+		"     Run sleep 60 to… 1 steer undelivered ",
+	]);
 });
 
 test("a one-line row with an incomplete transcript keeps a whole Steer label and time and leaves the warning to the detail when it cannot fit", async (t) => {
@@ -1037,7 +1019,7 @@ test("a one-line row with an incomplete transcript keeps a whole Steer label and
 	}
 });
 
-test("a short one-pane Fleet keeps the whole list row and shows the incomplete-transcript warning in the detail after Enter", async (t) => {
+test("a short narrow Fleet keeps its row on two lines with the Steer label and incomplete-transcript warning, and shows the warning in the detail after Enter", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
 	densityTerminal(t, 44);
 	const child = record("27c1", {
@@ -1048,12 +1030,11 @@ test("a short one-pane Fleet keeps the whole list row and shows the incomplete-t
 	const view = open(fakeSessions([child]), { rows: 10, audit: capture.audit });
 	await settle(view, 44);
 	const cells = listCells(view.lines(44));
-	const row = cells.find((cell) => cell.includes("worker 27c1"));
-	assert.ok(
-		row?.startsWith(" ▸ ◐ worker 27c1 ") &&
-			row.endsWith(" 1 steer pending · 3.2s "),
-		cells.join("\n"),
-	);
+	const at = findListRowIndex(cells, "worker 27c1");
+	assert.deepEqual(cells.slice(at, at + 2), [
+		" ▸ ◐ worker 27c1           running · 3.2s ",
+		"  1 steer pending · incomplete transcript ",
+	]);
 	view.press("\r");
 	const detail = listCells((await settle(view, 44)).split("\n"));
 	assert.equal(detail.length, 10);
