@@ -809,6 +809,7 @@ function wrapSettingsMouse(original: PatchMethod) {
 			closeSettings(this.getSettingsList() as unknown as SettingsListState);
 			return { handled: true };
 		}
+		if (narrow && (event.x < left || event.x >= left + inner)) return undefined;
 		const shown = settingsWindows.get(this);
 		const row = event.y - top;
 		const y =

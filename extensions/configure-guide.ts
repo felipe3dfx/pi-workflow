@@ -573,7 +573,7 @@ function createConfigGuide(
 				return { handled: true };
 			}
 			if (event.type !== "click" || event.button !== "left") return undefined;
-			const shut = modalMetrics(frameWidth).close;
+			const { close: shut, inset } = modalMetrics(frameWidth, narrow);
 			if (
 				event.y === 0 &&
 				shut &&
@@ -583,6 +583,8 @@ function createConfigGuide(
 				cancel();
 				return { handled: true };
 			}
+			if (narrow && (event.x < inset || event.x >= frameWidth - inset))
+				return undefined;
 			const target = targets[event.y - 1];
 			if (!target) return undefined;
 			confirmDiscard = false;

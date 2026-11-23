@@ -20,7 +20,11 @@ import {
 import { createAdvisor } from "../extensions/advisor.ts";
 import { renderChildrenBox } from "../extensions/children-box.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
-import { patchMenus, restoreMenus } from "../extensions/chrome-menus.ts";
+import {
+	modalFrame,
+	patchMenus,
+	restoreMenus,
+} from "../extensions/chrome-menus.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { createModelProfiles } from "../extensions/model-profiles.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
@@ -91,6 +95,7 @@ async function openGuide(t, rows = 40) {
 	);
 	const opened = await showing;
 	t.after(async () => {
+		opened.panel.handleInput(keys.escape);
 		opened.panel.handleInput(keys.escape);
 		await closing;
 	});
@@ -393,4 +398,213 @@ test("below 60 terminal columns the Fleet view renders at the full terminal widt
 			`│ ${"▸ ◐ worker 5636".padEnd(columns - 17)}running · 12s │`,
 		);
 	}
+});
+
+test("an open overlay keeps the layout it opened with while the terminal crosses 60 columns either way, and lays out again when reopened", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	freezeClock(t);
+	const terminal = densityTerminal(t, 44);
+	const frames = (opened) => [
+		plainOf(opened.guide.panel, 44),
+		plain(opened.settings.render(44)),
+		plainOf(opened.fleet.panel, 44),
+	];
+	const openAll = async () => ({
+		guide: await openGuide(t),
+		settings: settingsSelector().selector,
+		fleet: openFleet(t),
+	});
+
+	const narrow = await openAll();
+	const opening = frames(narrow);
+	assert.equal(opening[0][3], `│ ${"▸ [x] Child session".padEnd(40)} │`);
+	terminal.columns = 60;
+	assert.deepEqual(frames(narrow), opening);
+	assert.equal(narrow.guide.options.overlayOptions.width, "100%");
+
+	const wide = await openAll();
+	assert.deepEqual(wide.guide.options.overlayOptions, {
+		anchor: "center",
+		width: "70%",
+		minWidth: 48,
+		maxHeight: "100%",
+	});
+	const wideOpening = frames(wide);
+	assert.equal(wideOpening[0][3], `│  ${"▸ [x] Child session".padEnd(38)}  │`);
+	assert.match(wideOpening[1][0], /^ ┌─ Settings/);
+	assert.match(wideOpening[2][0], /^ ┌─ Fleet/);
+	terminal.columns = 59;
+	assert.deepEqual(frames(wide), wideOpening);
+
+	const reopened = await openAll();
+	assert.deepEqual(frames(reopened), opening);
+});
+
+test("model profiles end every cut model with … below 60 terminal columns", async (t) => {
+	const terminal = densityTerminal(t, 44);
+	const profiles = await openProfiles(t);
+	profiles.panel.handleInput("\r");
+	assert.equal(
+		plainOf(profiles.panel, 44)[4],
+		"│ ▸ worker openai-codex/gpt-6-astra · … ›  │",
+	);
+	for (const columns of [48, 52, 59]) {
+		terminal.columns = columns;
+		const reopened = await openProfiles(t);
+		reopened.panel.handleInput("\r");
+		const row = plainOf(reopened.panel, columns)[4];
+		assert.equal(row.length, columns);
+		if (row.includes("thinking: xhigh"))
+			assert.equal(
+				row,
+				"│ ▸ worker  openai-codex/gpt-6-astra · thinking: xhigh ›  │",
+			);
+		else assert.ok(row.endsWith("… ›  │"), row);
+	}
+});
+
+const longDescription =
+	"Compact the context when it fills up so the session can keep working without losing the thread of the conversation so far.";
+
+test("settings taller than a narrow screen scroll around the selected row with their hints in view, and a click reaches the row it lands on", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const terminal = densityTerminal(t, 44);
+	terminal.rows = 12;
+	const { selector, list } = settingsSelector(longDescription);
+	const frame = () => plain(selector.render(44));
+	const hints = [
+		"│   Type search  |  Enter/Space change     │",
+		"│   Esc cancel                             │",
+	];
+	let lines = frame();
+	assert.equal(lines.length, 12);
+	assert.deepEqual(lines.slice(-3, -1), hints);
+	assert.equal(lines.at(-1), `└${"─".repeat(42)}┘`);
+	assert.ok(lines.some((line) => line.startsWith("│ ▸ Setting 0 ")));
+
+	for (let i = 0; i < 5; i++) list.handleInput("\x1b[B");
+	lines = frame();
+	assert.equal(lines.length, 12);
+	assert.deepEqual(lines.slice(-3, -1), hints);
+	const row = lines.findIndex((line) => line.startsWith("│ ▸ Setting 5 "));
+	assert.ok(row > 0, lines.join("\n"));
+	assert.ok(!lines.some((line) => line.startsWith("│ ▸ Setting 0 ")));
+
+	const click = (x, y) =>
+		selector.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			screenX: x,
+			screenY: y,
+			width: 44,
+			height: lines.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		});
+	assert.equal(click(1, row), undefined);
+	assert.equal(click(2, lines.length - 3), undefined);
+	assert.match(frame()[row], /^│ ▸ Setting 5 +on +│$/);
+	assert.equal(click(2, row)?.handled, true);
+	assert.match(frame()[row], /^│ ▸ Setting 5 +off +│$/);
+});
+
+test("a click on a narrow config guide row reaches that row, and a click on its padding does not", async (t) => {
+	densityTerminal(t, 44);
+	const guide = await openGuide(t);
+	const click = (x, y) =>
+		guide.panel.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			screenX: x,
+			screenY: y,
+			width: 44,
+			height: 40,
+		});
+	const row = () => plainOf(guide.panel, 44)[4];
+	assert.equal(row(), `│ ${"  [x] Todo".padEnd(40)} │`);
+	assert.equal(click(1, 4), undefined);
+	assert.equal(click(42, 4), undefined);
+	assert.equal(row(), `│ ${"  [x] Todo".padEnd(40)} │`);
+	assert.deepEqual(click(2, 4), { handled: true });
+	assert.equal(row(), `│ ${"▸ [ ] Todo".padEnd(38)} • │`);
+});
+
+test("a click on a narrow Fleet row reaches that row, and a click on its padding does not", (t) => {
+	freezeClock(t);
+	densityTerminal(t, 44);
+	const fleet = openFleet(t);
+	const click = (x, y) =>
+		fleet.panel.handleMouse({ type: "click", button: "left", x, y });
+	const row = () => plainOf(fleet.panel, 44)[4];
+	const unselected = `│   ◐ worker a809${" ".repeat(12)}running · 12s │`;
+	assert.equal(row(), unselected);
+	assert.equal(click(1, 4), undefined);
+	assert.equal(row(), unselected);
+	assert.deepEqual(click(2, 4), { handled: true });
+	assert.equal(row(), `│ ▸ ◐ worker a809${" ".repeat(12)}running · 12s │`);
+});
+
+test("the subagents box ends its 8-row cap with … N more · Alt+A below 60 terminal columns, across 59/60 crossings both ways", (t) => {
+	const terminal = densityTerminal(t, 59);
+	const tail = (columns) =>
+		stripVTControlCharacters(
+			renderChildrenBox(theme, boxRecords, clock, columns).at(-1),
+		);
+	assert.equal(tail(59), " … 3 more · Alt+A");
+	terminal.columns = 60;
+	assert.equal(tail(60), " … 3 more · alt+a view");
+	terminal.columns = 59;
+	assert.equal(tail(59), " … 3 more · Alt+A");
+	terminal.columns = 44;
+	assert.equal(tail(43), " … 3 more · Alt+A");
+});
+
+test("below 60 terminal columns empty docked lists render nothing and the Todo keeps its pagination (preserved)", (t) => {
+	densityTerminal(t, 44);
+	assert.deepEqual(renderChildrenBox(theme, [], clock, 44), []);
+	assert.deepEqual(
+		renderTodoBox(theme, [], todoState, 44, new Map(), 40, 1).lines,
+		[],
+	);
+	const paged = renderTodoBox(
+		theme,
+		todoTasks(12),
+		todoState,
+		44,
+		new Map(),
+		40,
+		2,
+	);
+	assert.equal(paged.pageCount, 2);
+	assert.deepEqual(plain(paged.lines).slice(2, 7), [
+		`│ □ Task 9${" ".repeat(33)}│`,
+		`│ □ Task 10${" ".repeat(32)}│`,
+		`│ □ Task 11${" ".repeat(32)}│`,
+		`│ □ Task 12${" ".repeat(32)}│`,
+		"12/12 All 2/2 ‹ › Without done",
+	]);
+});
+
+test("below 60 terminal columns a modal line wider than its body ends with …, while descriptions hard-wrap an unbreakable token", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	densityTerminal(t, 44);
+	const token = "x".repeat(60);
+	assert.deepEqual(plain(modalFrame(theme, "Head", [token], 44, true)), [
+		`┌─ Head ${"─".repeat(29)} [×] ─┐`,
+		`│ ${"x".repeat(39)}… │`,
+		`└${"─".repeat(42)}┘`,
+	]);
+	const lines = plain(settingsSelector(token).selector.render(44));
+	const wrapped = lines
+		.map((line) => /^│ {3}(x+) +│$/.exec(line)?.[1])
+		.filter(Boolean);
+	assert.deepEqual(wrapped, ["x".repeat(36), "x".repeat(24)]);
 });

@@ -14,6 +14,7 @@ import { type Schedule, scheduleTimer } from "./clock.ts";
 import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
+	narrowScreen,
 	spinnerMs,
 	spread,
 	themeVar,
@@ -134,8 +135,9 @@ export function renderChildrenBox(
 		),
 	];
 	if (rows.length > shown.length) {
+		const view = narrowScreen() ? "Alt+A" : "alt+a view";
 		lines.push(
-			theme.fg("dim", ` … ${rows.length - shown.length} more · alt+a view`),
+			theme.fg("dim", ` … ${rows.length - shown.length} more · ${view}`),
 		);
 	}
 	return lines.map((line) => truncateToWidth(line, width));
