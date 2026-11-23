@@ -156,6 +156,38 @@ function lane() {
 // and whether that row is one of its own below the text.
 type Placement = { width: number; row: number; x: number; ownRow: boolean };
 
+// Below 60 columns a message's text blocks show one stamp, on the last block
+// that renders text at this width, which its source alone cannot tell. The
+// first block renders the whole group each frame and the rest reuse its rows.
+class StampGroup {
+	blocks: Framed[] = [];
+	rows = new Map<Framed, readonly string[]>();
+	width?: number;
+	recipient?: Framed;
+
+	take(block: Framed, width: number) {
+		if (
+			block === this.blocks[0] ||
+			this.width !== width ||
+			!this.rows.has(block)
+		)
+			this.prepare(width);
+		const rows = this.rows.get(block) ?? [];
+		this.rows.delete(block);
+		return { rows, carries: this.recipient === block };
+	}
+
+	prepare(width: number) {
+		this.width = width;
+		this.rows.clear();
+		for (const block of this.blocks)
+			this.rows.set(block, block.child.render(block.geometry(width).inner));
+		this.recipient = this.blocks.findLast((block) =>
+			this.rows.get(block)?.some(visibleRow),
+		);
+	}
+}
+
 class Framed implements Component {
 	child: Component;
 	host = new Container();
@@ -163,7 +195,7 @@ class Framed implements Component {
 	edge: number;
 	narrowRight: number;
 	placement?: Placement;
-	stampGroup?: Framed[];
+	stampGroup?: StampGroup;
 
 	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
@@ -199,32 +231,23 @@ class Framed implements Component {
 		const frame = this.geometry(width);
 		const { first, rest, stamp, trail, fits, offset, inner } = frame;
 		this.placement = undefined;
-		const lines = this.child
-			.render(inner)
-			.map((line, i) => (fits ? (i === 0 ? first : rest) + line : line));
+		const floats = frame.narrow && fits && stamp !== "";
+		const { rows, carries } =
+			floats && this.stampGroup
+				? this.stampGroup.take(this, width)
+				: { rows: this.child.render(inner), carries: true };
+		const lines = rows.map((line, i) =>
+			fits ? (i === 0 ? first : rest) + line : line,
+		);
 		const tail = `${stamp}${" ".repeat(trail)}`;
 		if (frame.reserved && lines.length > 0) {
 			const pad = Math.max(0, offset + inner - visibleWidth(lines[0]));
 			lines[0] += `${" ".repeat(pad + stampGap)}${tail}`;
-		} else if (frame.narrow && fits && stamp && this.carriesStamp(width)) {
+		} else if (floats && carries) {
 			const x = width - visibleWidth(tail);
 			if (x >= 0) this.placement = placeFloatingStamp(lines, tail, x, width);
 		}
 		return lines.map((line) => truncateToWidth(line, width));
-	}
-
-	// Below 60 columns a group shows one stamp, on its last block that renders
-	// text at this width, which its source alone cannot tell.
-	carriesStamp(width: number) {
-		const group = this.stampGroup ?? [this];
-		return (
-			group.findLast((block) => block === this || block.showsText(width)) ===
-			this
-		);
-	}
-
-	showsText(width: number) {
-		return this.child.render(this.geometry(width).inner).some(visibleRow);
 	}
 
 	handleMouse(event: TuiMouseEvent) {
@@ -507,7 +530,7 @@ function updateContent(
 		this.contentContainer.addChild(new Spacer(1));
 	}
 	let thinkingRunIndex = 0;
-	const texts: Framed[] = [];
+	const texts = new StampGroup();
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
@@ -532,7 +555,7 @@ function updateContent(
 				blockRight,
 			);
 			block.stampGroup = texts;
-			texts.push(block);
+			texts.blocks.push(block);
 			this.contentContainer.addChild(block);
 		} else if (content.type === "thinking") {
 			const thinkingBlocks: string[] = [];

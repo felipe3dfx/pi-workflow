@@ -1449,6 +1449,25 @@ test("below 60 terminal columns a streaming assistant message places its stamp a
 	]);
 });
 
+test("below 60 terminal columns each assistant text block renders once per frame while the stamp still finds the last visible text", (t) => {
+	patched(t);
+	densityTerminal(t, 44);
+	const component = assistantComponent(true);
+	const comments = Array.from({ length: 16 }, () => text("<!-- note -->"));
+	const content = [text("First paragraph."), ...comments];
+	component.updateContent(assistant(content), true);
+	const render = t.mock.method(Markdown.prototype, "render");
+	for (let frame = 0; frame < 2; frame++) {
+		render.mock.resetCalls();
+		const lines = plain(component.render(43));
+		assert.deepEqual(
+			lines.filter((line) => line.includes("11:55 AM")),
+			[`  First paragraph.${" ".repeat(16)}11:55 AM`],
+		);
+		assert.equal(render.mock.callCount(), content.length);
+	}
+});
+
 test("below 60 terminal columns a multi-line user message ends its last line with the stamp, or puts it in the bottom background row", (t) => {
 	patched(t);
 	densityTerminal(t, 44);
