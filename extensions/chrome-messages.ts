@@ -887,9 +887,14 @@ function compactList(
 				renderedAnyLine = true;
 				continue;
 			}
+			// Tables keep the width Pi gives them at 4 columns per level.
+			const tokenWidth =
+				itemToken.type === "table"
+					? Math.max(1, itemWidth - 2 * depth)
+					: itemWidth;
 			for (const line of this.renderToken(
 				itemToken,
-				itemWidth,
+				tokenWidth,
 				undefined,
 				styleContext,
 			))
