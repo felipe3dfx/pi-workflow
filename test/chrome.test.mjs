@@ -897,6 +897,64 @@ test("below 60 terminal columns the status row spinner sits in the lane with a 1
 		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
 });
 
+test("a status row too tight for every field keeps both timers whole, dropping Run, then the token count, then shortening the name", (t) => {
+	const terminal = densityTerminal(t, 44);
+	const status = (columns, data) => {
+		terminal.columns = columns;
+		return plain(
+			renderStatusRow(theme, { frame: 0, label: "Working", ...data }, columns),
+		)[0];
+	};
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		status(44, {
+			tool: "mcp__context7__query_docs",
+			turnMs: 65_000,
+			outputTokens: 3_000,
+		}),
+		"⠋ mcp__context7__query_docs   1m 05s ⇣3.00k",
+	);
+	assert.equal(
+		status(60, {
+			tool: "mcp__github__get_pull_request_comments",
+			turnMs: 65_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ mcp__github__get_pull_request_comments   1m 05s ⇣3.00k",
+	);
+	assert.equal(
+		status(70, {
+			tool: list,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 50,
+		}),
+		"   ⠋ mcp__github__list_pull_request_review_comments 1m 05s 1m 09s ⇣50",
+	);
+	assert.equal(
+		status(70, {
+			tool: list,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ mcp__github__list_pull_request_review_comments 1m 05s     1m 09s",
+	);
+	assert.equal(
+		status(44, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
+		"⠋ mcp__github__list_pull_request_re… 1m 05s",
+	);
+	assert.equal(
+		status(70, {
+			tool: `${list}_and_threads`,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 50,
+		}),
+		"   ⠋ mcp__github__list_pull_request_review_comments_an… 1m 05s 1m 09s",
+	);
+});
+
 const wideBytes = JSON.parse(
 	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
 );

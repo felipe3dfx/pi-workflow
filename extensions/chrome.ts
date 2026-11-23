@@ -236,24 +236,42 @@ export function renderStatusRow(
 		? Math.max(0, width - 1)
 		: width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
-	const label = terminalSafeLine(data.label);
-	const activity = data.tool
-		? `${theme.fg("dim", "Run ")}${theme.fg("text", terminalSafeLine(data.tool))}`
-		: theme.fg("text", label);
+	const name = terminalSafeLine(data.tool ?? data.label);
 	const phase =
 		data.stepMs !== undefined && room >= phaseTimerMinWidth
 			? theme.fg("dim", ` ${formatDuration(data.stepMs)}`)
 			: "";
-	const totals = [
-		data.turnMs !== undefined ? formatDuration(data.turnMs) : "",
-		data.outputTokens ? `⇣${formatOutputTokens(data.outputTokens)}` : "",
-	]
-		.filter(Boolean)
-		.join(" ");
-	const left = `${theme.fg("text", spinner)} ${activity}${phase}`;
-	const line = totals
-		? spread(left, theme.fg("dim", totals), room)
-		: truncateToWidth(left, room);
+	const turn = data.turnMs !== undefined ? formatDuration(data.turnMs) : "";
+	const tokens = data.outputTokens
+		? `⇣${formatOutputTokens(data.outputTokens)}`
+		: "";
+	const left = (run: boolean, shown = name) =>
+		`${theme.fg("text", spinner)} ${data.tool && run ? theme.fg("dim", "Run ") : ""}${theme.fg("text", shown)}${phase}`;
+	const right = (counted: boolean) =>
+		[turn, counted ? tokens : ""].filter(Boolean).join(" ");
+	const needed = (l: string, r: string) =>
+		visibleWidth(l) + (r ? 1 + visibleWidth(r) : 0);
+	// Overflow keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
+	const [l, r] = !(phase || turn)
+		? [left(true), right(true)]
+		: ([
+				[left(true), right(true)],
+				[left(false), right(true)],
+				[left(false), right(false)],
+			].find(([l, r]) => needed(l, r) <= room) ?? [
+				left(
+					false,
+					truncateToWidth(
+						name,
+						Math.max(0, room - needed(left(false, ""), right(false))),
+						"…",
+					),
+				),
+				right(false),
+			]);
+	const line = r
+		? spread(l, theme.fg("dim", r), room)
+		: truncateToWidth(l, room);
 	return narrow ? [line] : indented([line], width, indent);
 }
 
