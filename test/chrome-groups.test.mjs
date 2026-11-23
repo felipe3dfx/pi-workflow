@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 
 import {
+	BashExecutionComponent,
 	CustomMessageComponent,
 	InteractiveMode,
 	initTheme,
@@ -12,6 +14,7 @@ import {
 	Container,
 	Markdown,
 	ScrollView,
+	setCapabilityOverrides,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
@@ -767,17 +770,89 @@ test("in a 44-column terminal, with or without the scrollbar, no transcript bloc
 	}
 });
 
-test("at 60 and 100 terminal columns the transcript renders as it does without a terminal", (t) => {
-	const { mode } = transcript(t);
-	const today = new Map(
-		[59, 60, 99, 100].map((width) => [width, mode.chatContainer.render(width)]),
+function wideTranscript(t) {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
+	const dir = withAgentDirectory(t);
+	writeAdvisorModel(dir, {
+		model: "anthropic/claude-opus-5",
+		thinking: "high",
+	});
+	let advisor;
+	createAdvisor(dir).offer({
+		registerTool: (definition) => {
+			advisor = definition;
+		},
+	});
+	const session = chat(t);
+	const { mode, say, tool, card } = session;
+	const ui = { requestRender() {} };
+	say([thought(), said("Looking.")]);
+	tool("read", { path: "a.ts" });
+	tool("grep", { pattern: "TODO" }, { text: "hit" });
+	tool("bash", { command: "ls" }, { text: "one" });
+	asked(mode, "Which rollout?", "Gradual rollout");
+	card("pi-workflow-child-result", { ...result("1111"), elapsedMs: 42_000 });
+	say([said("Checking.")], "stop");
+	const bash = new BashExecutionComponent("ls", ui);
+	bash.appendOutput("hello world");
+	bash.setComplete(0, false);
+	mode.chatContainer.addChild(bash);
+	const advice = new ToolExecutionComponent(
+		"advisor",
+		"call-advisor",
+		{},
+		{ showImages: false },
+		compactToolRenderers("advisor", () => advisor),
+		ui,
+		"/",
 	);
+	advice.updateResult(
+		{
+			content: [{ type: "text", text: "Sound." }],
+			details: { model: "anthropic/claude-opus-5", thinking: "high" },
+			isError: false,
+			durationMs: 15_000,
+		},
+		false,
+	);
+	mode.chatContainer.addChild(advice);
+	mode.chatContainer.addChild(
+		new CustomMessageComponent(
+			{
+				role: "custom",
+				customType: "pi-workflow-exploration-budget",
+				content: "Continue discovery in an explore child.",
+				details: { lookups: 40, textBytes: 120_000 },
+				display: true,
+			},
+			renderers.get("pi-workflow-exploration-budget"),
+			markdownTheme,
+			1,
+		),
+	);
+	return session;
+}
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
+);
+
+test("at 60 and 100 terminal columns the transcript renders the base's bytes", (t) => {
+	const { mode } = wideTranscript(t);
 	const terminal = densityTerminal(t, 60);
-	assert.deepEqual(mode.chatContainer.render(59), today.get(59));
-	assert.deepEqual(mode.chatContainer.render(60), today.get(60));
-	terminal.columns = 100;
-	assert.deepEqual(mode.chatContainer.render(99), today.get(99));
-	assert.deepEqual(mode.chatContainer.render(100), today.get(100));
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths)
+			assert.deepEqual(
+				mode.chatContainer.render(width),
+				wideBytes.transcript[width],
+				`${width} in ${columns}`,
+			);
+	}
 });
 
 test("below 60 terminal columns a click on a row's last content cell toggles it, and a click on the right margin next to it does not", (t) => {

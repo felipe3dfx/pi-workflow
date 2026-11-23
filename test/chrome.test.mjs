@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
@@ -836,24 +837,25 @@ test("below 60 terminal columns the status row spinner sits in the lane with a 1
 		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
 });
 
-test("at 60 and 100 terminal columns the status row renders as without a terminal, and the header renders the same at every terminal width", (t) => {
-	const data = { frame: 0, label: "Working", stepMs: 3_600, turnMs: 3_700 };
-	const today = (width) => [
-		...plain(renderStatusRow(theme, data, width)),
-		...plain(renderHeader(theme, header, width)),
-	];
-	const expected = new Map(
-		[44, 59, 60, 100].map((width) => [width, today(width)]),
-	);
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
+);
+const statusData = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
+
+test("at 60 and 100 terminal columns the status row renders the base's bytes, and the header renders them at every terminal width", (t) => {
 	const terminal = densityTerminal(t, 60);
-	assert.deepEqual(today(60), expected.get(60));
-	terminal.columns = 100;
-	assert.deepEqual(today(100), expected.get(100));
-	for (const columns of [44, 59]) {
+	for (const columns of [60, 100]) {
 		terminal.columns = columns;
 		assert.deepEqual(
-			plain(renderHeader(theme, header, columns)),
-			expected.get(columns).slice(1),
+			renderStatusRow(painted, statusData, columns),
+			wideBytes.status[columns],
+		);
+	}
+	for (const columns of [44, 59, 60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			renderHeader(painted, header, columns),
+			wideBytes.header[columns],
 		);
 	}
 });
