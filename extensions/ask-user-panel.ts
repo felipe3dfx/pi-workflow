@@ -396,35 +396,47 @@ async function askPanel(
 									(first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
 								return shared ? Math.min(count, 1) : count;
 							};
-							const need = (visible: number, shared: boolean) => {
+							const need = (
+								visible: number,
+								shared: boolean,
+								focused: (i: number) => number,
+							) => {
 								const [first, last] = span(visible);
 								let rows = cues(visible, shared);
 								for (let i = first; i < last; i++)
-									rows += i === index ? whole(i) : least(i);
+									rows += i === index ? focused(i) : least(i);
 								return rows;
 							};
+							// The whole focused block first, then its label and first description row.
 							let plan = { gaps: 0, shared: true, visible: 1 };
-							search: for (let gaps = gapsMax; gaps >= -1; gaps--)
-								for (let visible = options.length; visible >= 1; visible--)
-									if (need(visible, gaps < 0) <= budget - Math.max(gaps, 0)) {
-										plan = {
-											gaps: Math.max(gaps, 0),
-											shared: gaps < 0,
-											visible,
-										};
-										break search;
-									}
+							search: for (const focused of [whole, least])
+								for (let gaps = gapsMax; gaps >= -1; gaps--)
+									for (let visible = options.length; visible >= 1; visible--)
+										if (
+											need(visible, gaps < 0, focused) <=
+											budget - Math.max(gaps, 0)
+										) {
+											plan = {
+												gaps: Math.max(gaps, 0),
+												shared: gaps < 0,
+												visible,
+											};
+											break search;
+										}
 							const [first, last] = span(plan.visible);
-							let spare = budget - plan.gaps - need(plan.visible, plan.shared);
+							let spare =
+								budget - plan.gaps - need(plan.visible, plan.shared, least);
 							const limits = new Map<number, number>();
+							if (index >= first && index < last) {
+								const grow = Math.max(
+									0,
+									Math.min(spare, whole(index) - least(index)),
+								);
+								spare -= grow;
+								limits.set(index, least(index) + grow);
+							}
 							for (let i = first; i < last; i++) {
-								if (i === index) {
-									limits.set(
-										i,
-										Math.max(least(i), whole(i) + Math.min(spare, 0)),
-									);
-									continue;
-								}
+								if (i === index) continue;
 								const grow = whole(i) - least(i);
 								const wraps = grow > 0 && grow <= spare;
 								if (wraps) spare -= grow;

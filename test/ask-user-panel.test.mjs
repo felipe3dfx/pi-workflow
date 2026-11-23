@@ -2056,6 +2056,55 @@ test("at 43x31 a focused middle option keeps its description below its label wit
 	);
 });
 
+const sixLineQuestion =
+	"The staging rollout passed but two background jobs still use the old schema, and the nightly export reads both tables. Which rollout should we use so we can deploy today without interrupting writes?";
+
+test("at 43x31 a choice that costs the same row as its more row is shown instead, and the focused description takes the rows left", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-equal-cost",
+		{
+			question: sixLineQuestion,
+			options: [
+				{
+					label: "Canary",
+					description:
+						"Start in one region and wait for the nightly export before expanding.",
+				},
+				{ label: "Wait until tomorrow" },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"The staging rollout passed but two",
+				"background jobs still use the old",
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"use so we can deploy today without",
+				"interrupting writes?",
+				"▸ 1  Canary",
+				"     Start in one region and wait for …",
+				"  2  Wait until tomorrow",
+				"  z  Type your answer",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			39,
+		),
+	);
+	send("X");
+	await pending;
+});
+
 test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
 	densityTerminal(t, 43);
 	const tool = createAskUserChoiceTool(createFooterHints());
