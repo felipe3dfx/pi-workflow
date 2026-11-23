@@ -70,6 +70,26 @@ test("the box reads Subagents with counts by state, and each row shows the state
 	assert.equal(lines.length, 3);
 });
 
+test("a row reads its full elapsed time at narrow and wide widths, shortening a long model instead", () => {
+	const row = (width) =>
+		stripVTControlCharacters(
+			renderChildrenBox(
+				theme,
+				[
+					child({
+						model: "claude-sonnet-4-6-with-custom-identifier",
+						thinking: undefined,
+						startedAt: now - 3_240,
+					}),
+				],
+				now,
+				width,
+			)[1],
+		);
+	assert.equal(row(44), " claude-sonnet-4-6-with-custom-ident... 3.2s");
+	assert.match(row(100), / claude-sonnet-4-6-with-custom-identifier 3\.2s$/);
+});
+
 test("the first row is highlighted, a queued row shows queued, and the task's first line stands in for a missing step", () => {
 	const lines = renderChildrenBox(
 		theme,

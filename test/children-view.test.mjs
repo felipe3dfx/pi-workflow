@@ -875,6 +875,61 @@ test("one-line rows show the Run state, or only its time in the narrowest pane, 
 	assert.match(single[5], /✗ reviewer 27c1 Run sleep.* failed · 4m 00s +│$/);
 });
 
+function timed() {
+	const finished = (id, state) =>
+		record(id, { state, startedAt: now - 3_240, endedAt: now, text: "Done." });
+	const done = finished("5636", "completed");
+	const failed = finished("27c1", "failed");
+	return fakeSessions([done, failed], {
+		[done.id]: { entries: [] },
+		[failed.id]: { entries: [] },
+	});
+}
+
+const listCell = (lines, name) =>
+	lines
+		.map((line) => plain(line).split("│")[1] ?? "")
+		.findIndex((cell) => cell.includes(name));
+
+test("a child's Fleet row reads its elapsed time in the shared format at narrow and wide widths", () => {
+	for (const width of [44, 100]) {
+		const lines = open(timed(), { rows: 40 }).lines(width);
+		const at = listCell(lines, "worker 27c1");
+		assert.ok(at > 0, lines.join("\n"));
+		assert.match(
+			plain(lines[at]),
+			/✗ worker 27c1 +failed · 3\.2s /,
+			`${width}`,
+		);
+	}
+});
+
+test("a wide two-line row too tight for its Run state and time keeps role, id, and Run state on the first line and moves the full time to the second", () => {
+	for (const width of [100, 104]) {
+		const lines = open(timed(), { rows: 40 })
+			.lines(width)
+			.map((line) => plain(line).split("│")[1] ?? "");
+		const at = lines.findIndex((cell) => cell.includes("worker 5636"));
+		assert.match(lines[at], /^ {2}▸ ✓ worker 5636 +completed $/, `${width}`);
+		assert.match(lines[at + 1], /^ {6}Run sleep.* 3\.2s $/, `${width}`);
+		assert.match(
+			lines[at + 2],
+			/^ {4}✗ worker 27c1 +failed · 3\.2s $/,
+			`${width}`,
+		);
+	}
+	const roomy = open(timed(), { rows: 40 }).lines(60).map(plain);
+	assert.match(
+		roomy[listCell(roomy, "worker 5636")],
+		/✓ worker 5636 +completed · 3\.2s +│$/,
+	);
+	const short = open(timed(), { rows: 10 }).lines(60).map(plain);
+	assert.match(
+		short[listCell(short, "worker 5636")],
+		/✓ worker 5636 Run sleep 60 to wa… completed · 3\.2s +│$/,
+	);
+});
+
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {
 	const bytes = ["\x1b[2J", "\x1b]52;c;", "\x9b", "\x07", "‮", "⁦"];
 	const hostile = (label) => `${label}\x1b[2J\x1b]52;c;eA==\x07\x9b31m‮⁦end`;

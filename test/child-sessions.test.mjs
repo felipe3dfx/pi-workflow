@@ -6317,17 +6317,25 @@ test("children launched by one codemode call are grouped under it with the numbe
 		assert.ok(at > 0, lines.join("\n"));
 		assert.match(lines[at + 1], /2 launched · 1 done +3\.0k tok/);
 		const rows = lines.map((line) => line.split("│")[1] ?? "");
-		assert.ok(rows.slice(0, at).some((line) => /◐ worker/.test(line)));
-		assert.match(rows[at + 2], /◐ worker/);
-		assert.match(rows[at + 3], /1\.0k tok/);
+		const row = (id) =>
+			rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
+		assert.ok(row(direct) >= 0 && row(direct) < at, lines.join("\n"));
+		assert.match(
+			rows[at + 2],
+			new RegExp(`◐ worker ${second.slice(0, 4)} +running $`),
+		);
+		assert.match(rows[at + 3], / \d\.\ds · 1\.0k tok $/);
 		const history = rows.findIndex((line) => /History ─/.test(line));
 		const again = lines.findIndex(
 			(line, i) => i > history && / script ipt7 ─/.test(line),
 		);
 		assert.ok(at < history && history < again, lines.join("\n"));
 		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
-		assert.match(rows[again + 2], /✓ w.* completed · /);
-		assert.match(rows[again + 3], /2\.0k tok/);
+		assert.match(
+			rows[again + 2],
+			new RegExp(`✓ worker ${first.slice(0, 4)} +completed $`),
+		);
+		assert.match(rows[again + 3], / \d\.\ds · 2\.0k tok $/);
 	});
 });
 

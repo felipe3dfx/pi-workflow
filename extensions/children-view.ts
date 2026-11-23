@@ -1518,10 +1518,18 @@ function createChildrenView(
 						(text) => visibleWidth(head) + 1 + visibleWidth(text) <= width,
 					) ?? right([timeOf(item, now)]);
 			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
+			const moved =
+				item.live &&
+				child.state !== "queued" &&
+				visibleWidth(head) + 1 + visibleWidth(state) > width;
 			const shown = two
 				? [
-						spread(head, theme.fg("dim", state), width),
-						spread(`    ${detail}`, right(spend), width),
+						spread(head, theme.fg("dim", moved ? child.state : state), width),
+						spread(
+							`    ${detail}`,
+							right(moved ? [runTime(child, now), ...spend] : spend),
+							width,
+						),
 					]
 				: [
 						spread(

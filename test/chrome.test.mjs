@@ -231,7 +231,7 @@ test("below the width its protected parts need the header truncates the whole li
 		}
 });
 
-test("token counts and durations use the compact formats", () => {
+test("token counts use the compact formats", () => {
 	assert.deepEqual(
 		[999, 3_000, 34_567, 256_000, 1_000_000, 12_000_000].map(
 			formatContextTokens,
@@ -253,6 +253,8 @@ const durations = [
 	[9_960, "10s"],
 	[10_000, "10s"],
 	[12_400, "12s"],
+	[12_460, "12s"],
+	[12_500, "13s"],
 	[12_600, "13s"],
 	[59_400, "59s"],
 	[59_600, "1m 00s"],

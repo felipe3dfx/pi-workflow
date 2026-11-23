@@ -302,6 +302,21 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 		);
 		t.mock.timers.reset();
 	}
+	t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
+	const component = assistantComponent(true);
+	component.updateContent(assistant([thought], { timestamp: 65_000 }), true);
+	t.mock.timers.tick(65_000);
+	component.updateContent(
+		assistant([thought, answer], { timestamp: 65_000 }),
+		true,
+	);
+	for (const width of [44, 100]) {
+		assert.equal(
+			plain(component.render(width))[1].trimEnd(),
+			"   ◆ Thought for 1m 05s",
+			`${width} columns`,
+		);
+	}
 });
 
 test("framed blocks never exceed the width at tiny widths", (t) => {

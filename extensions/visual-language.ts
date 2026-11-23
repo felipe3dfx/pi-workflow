@@ -74,9 +74,10 @@ export function themeBgVar(name: string) {
 export const minThoughtMs = 1_000;
 
 export function formatDuration(ms: number) {
-	const tenths = Math.round(Math.max(0, ms) / 100);
+	const elapsed = Math.max(0, ms);
+	const tenths = Math.round(elapsed / 100);
 	if (tenths < 100) return `${(tenths / 10).toFixed(1)}s`;
-	const whole = Math.round(tenths / 10);
+	const whole = Math.round(elapsed / 1000);
 	if (whole < 60) return `${whole}s`;
 	const minutes = Math.floor(whole / 60);
 	const pad = (value: number) => String(value).padStart(2, "0");
