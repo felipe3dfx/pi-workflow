@@ -897,6 +897,31 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 	}
 });
 
+test("at 60 and 100 terminal columns multi-line user and assistant messages keep the base's stamp on their first line", (t) => {
+	const { mode, say } = chat(t);
+	const long =
+		"Review the narrow terminal layout before changing the status bar, then check the wrapping rules for long messages in every block of the transcript once more.";
+	InteractiveMode.prototype.addMessageToChat.call(mode, {
+		role: "user",
+		content: long,
+		timestamp: at1155,
+	});
+	say([said(long)], "stop");
+	const terminal = densityTerminal(t, 60);
+	for (const [columns, widths] of [
+		[60, [59, 60]],
+		[100, [99, 100]],
+	]) {
+		terminal.columns = columns;
+		for (const width of widths)
+			assert.deepEqual(
+				mode.chatContainer.render(width),
+				wideBytes.stamp[width],
+				`${width} in ${columns}`,
+			);
+	}
+});
+
 test("below 60 terminal columns a click on a row's last content cell toggles it, and a click on the right margin next to it does not", (t) => {
 	const { mode, tool, render } = chat(t);
 	densityTerminal(t, 44);

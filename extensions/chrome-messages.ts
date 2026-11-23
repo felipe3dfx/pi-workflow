@@ -58,6 +58,7 @@ export const assistantInset = 3;
 const userMargin = 1;
 const userInset = 2;
 const narrowUserPadding = 1;
+const userBand = 1;
 const imageLine = new RegExp(`${String.fromCharCode(27)}(?:_G|\\]1337;File=)`);
 const foregroundCodes = new RegExp(
 	`${String.fromCharCode(27)}\\[(?:3[0-79]|9[0-7]|38[;:][\\d;:]+)m`,
@@ -150,12 +151,16 @@ function lane() {
 	return narrowScreen() ? "  " : "";
 }
 
+type Floated = { width: number; row: number; x: number };
+
 class Framed implements Component {
 	child: Component;
 	host = new Container();
 	frame: () => Frame;
 	edge: number;
 	narrowRight: number;
+	floated?: Floated;
+	ownRow = false;
 
 	constructor(child: Component, frame: () => Frame, edge = 0, narrowRight = 0) {
 		this.child = child;
@@ -176,10 +181,32 @@ class Framed implements Component {
 		const prefix = visibleWidth(first);
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
 		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
+		this.floated = undefined;
+		this.ownRow = false;
 		if (width - prefix < 1)
 			return this.child
 				.render(width)
 				.map((line) => truncateToWidth(line, width));
+		if (narrowScreen()) {
+			const lines = this.child
+				.render(width - prefix)
+				.map((line, i) => (i === 0 ? first : rest) + line);
+			const x = width - visibleWidth(stamp) - trail;
+			if (stamp && lines.length > 0 && x >= 0) {
+				const tail = `${stamp}${" ".repeat(trail)}`;
+				const row = lines.length - 1;
+				const text = lines[row].trimEnd();
+				const used = visibleWidth(text);
+				if (used + stampGap <= x)
+					lines[row] = `${text}${" ".repeat(x - used)}${tail}`;
+				else {
+					lines.push(`${" ".repeat(x)}${tail}`);
+					this.ownRow = true;
+				}
+				this.floated = { width, row: lines.length - 1, x };
+			}
+			return lines.map((line) => truncateToWidth(line, width));
+		}
 		const inner = width - prefix - (stamped ? reserve : 0);
 		const lines = this.child
 			.render(inner)
@@ -200,11 +227,21 @@ class Framed implements Component {
 		const { first, stamp = "", trail = 0 } = this.frame();
 		const prefix = visibleWidth(first);
 		const reserve = stamp ? stampGap + visibleWidth(stamp) + trail : 0;
-		const stamped = reserve > 0 && width - prefix - reserve >= minTextWidth;
+		const narrow = narrowScreen();
+		const stamped =
+			!narrow && reserve > 0 && width - prefix - reserve >= minTextWidth;
 		const offset = width - prefix < 1 ? 0 : prefix;
 		const inner = width - offset - (stamped ? reserve : 0);
 		const x = inside.x - offset;
 		if (x < 0 || x >= inner || event.y < 0 || event.y >= event.height)
+			return undefined;
+		const floated = this.floated;
+		if (
+			narrow &&
+			floated?.width === width &&
+			event.y === floated.row &&
+			inside.x >= floated.x
+		)
 			return undefined;
 		return this.host.handleMouse({ ...inside, x, width: inner });
 	}
@@ -582,7 +619,7 @@ class DensityAwareBox extends Box {
 	appliedPaddingX: number;
 
 	constructor(widePaddingX: number, bg: (text: string) => string) {
-		super(widePaddingX, 1, bg);
+		super(widePaddingX, userBand, bg);
 		this.widePaddingX = widePaddingX;
 		this.appliedPaddingX = widePaddingX;
 	}
@@ -593,7 +630,11 @@ class DensityAwareBox extends Box {
 			this.appliedPaddingX = pad;
 			this.setPaddingX(pad);
 		}
-		return super.render(width);
+		const lines = super.render(width);
+		const ownRow = this.children.some(
+			(child) => child instanceof Framed && child.ownRow,
+		);
+		return ownRow ? lines.slice(0, lines.length - userBand) : lines;
 	}
 }
 
