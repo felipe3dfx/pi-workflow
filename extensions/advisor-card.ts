@@ -25,7 +25,12 @@ import {
 } from "./child-result-card.ts";
 import { hidden } from "./compact-tools.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import { affordance, narrowScreen, themeVar } from "./visual-language.ts";
+import {
+	affordance,
+	narrowScreen,
+	runStateMark,
+	themeVar,
+} from "./visual-language.ts";
 
 type RenderContext = Parameters<NonNullable<ToolDefinition["renderResult"]>>[3];
 type Result = {
@@ -116,7 +121,10 @@ class AdvisorCard implements Component {
 			case "failed":
 				return t.fg("error", "failed");
 			case "stopped":
-				return t.fg("dim", "stopped");
+				// Narrow, the Advisor says cancelled like a child stopped the same way (D-open-2).
+				return narrowScreen()
+					? runStateMark("cancelled").paint(t, "cancelled")
+					: t.fg("dim", "stopped");
 			case "refused":
 				return t.fg("warning", "refused");
 			default:

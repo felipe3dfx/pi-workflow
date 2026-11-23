@@ -454,6 +454,37 @@ test("below 60 terminal columns a card too narrow for its +N lines tail wraps th
 	for (const line of lines.slice(tail)) assert.match(line, /^ {2}\S/);
 });
 
+test("below 60 terminal columns an aborted consultation reads cancelled in the muted tone, and 60 columns or more keeps the dim stopped", async (t) => {
+	const card = await advisorCard(t);
+	const terminal = densityTerminal(t, 44);
+	const aborted = () =>
+		card(failed("aborted", "Advisor consultation stopped by the operator."));
+	const narrow = () => {
+		assert.deepEqual(plain(aborted(), 43), [
+			"",
+			"◇ Advisor cancelled 3.0s",
+			"  claude-opus-5 (high)",
+			"  Advisor consultation stopped by the",
+			"  operator.",
+		]);
+		assert.ok(
+			aborted().render(43)[1].includes(theme().fg("muted", "cancelled")),
+		);
+	};
+	const wide = () => {
+		const head = aborted().render(100)[1];
+		assert.ok(head.includes(theme().fg("dim", "stopped")), head);
+		assert.doesNotMatch(head, /cancelled/);
+	};
+	narrow();
+	terminal.columns = 60;
+	wide();
+	terminal.columns = 59;
+	narrow();
+	terminal.columns = 100;
+	wide();
+});
+
 test("at 60 and 100 terminal columns the advisor card renders the base's bytes in every phase", async (t) => {
 	const card = await advisorCard(t);
 	const terminal = densityTerminal(t, 60);

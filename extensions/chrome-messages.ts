@@ -45,6 +45,7 @@ import {
 	initializedTheme,
 	minThoughtMs,
 	narrowScreen,
+	runStateMark,
 	theme,
 	themeVar,
 } from "./visual-language.ts";
@@ -529,10 +530,14 @@ function expandedThinking(
 	);
 }
 
-function notice(text: string, inset: number) {
+// Narrow, red stays for errors: an abort shows the muted – of the shared scale (NS-19).
+function notice(text: string, inset: number, aborted = false) {
 	return new Framed(
 		new Text(theme().fg("muted", text), 0, 0),
-		() => ({ first: `${theme().fg("error", "◆")} `, rest: "  " }),
+		() => ({
+			first: `${aborted && narrowScreen() ? runStateMark("cancelled").paint(theme()) : theme().fg("error", "◆")} `,
+			rest: "  ",
+		}),
 		inset,
 		blockRight,
 	);
@@ -658,7 +663,7 @@ function updateContent(
 					? message.errorMessage
 					: "Operation aborted";
 			this.contentContainer.addChild(new Spacer(1));
-			this.contentContainer.addChild(notice(abortMessage, inset));
+			this.contentContainer.addChild(notice(abortMessage, inset, true));
 		} else if (message.stopReason === "error") {
 			const errorMsg = message.errorMessage || "Unknown error";
 			this.contentContainer.addChild(new Spacer(1));

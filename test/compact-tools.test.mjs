@@ -16,6 +16,7 @@ import {
 	createCodemodeExtension,
 	createWriteToolDefinition,
 	initTheme,
+	ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
@@ -28,6 +29,7 @@ import {
 import { readSelection } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import piWorkflowExtension from "../extensions/pi-workflow.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const builtIns = {
 	read: createReadToolDefinition,
@@ -290,6 +292,134 @@ test("a closed tool colors only its glyph by status: error, running dim, done to
 		`<dim>◆</dim> ${rest}`,
 	);
 	assert.equal(row({ isError: false }), `<toolTitle>◆</toolTitle> ${rest}`);
+});
+
+test("below 60 terminal columns a closed tool keeps ◆ in every state and takes its colour from the shared scale, and 60 columns or more keeps today's colours", (t) => {
+	initTheme("dark", false);
+	const tool = loadTools().get("bash");
+	const tagged = {
+		...theme,
+		fg: (color, text) => `<${color}>${text}</${color}>`,
+	};
+	const context = renderContext({ command: "false" }, false, "/");
+	const glyphs = () =>
+		[
+			{ isError: true },
+			{ isError: false, isPartial: true },
+			{ isError: false },
+		].map(
+			(status) =>
+				tool
+					.renderCall({ command: "false" }, tagged, { ...context, ...status })
+					.render(80)[0]
+					.split(" ")[0],
+		);
+	const narrow = [
+		"<error>◆</error>",
+		"<accent>◆</accent>",
+		"<success>◆</success>",
+	];
+	const wide = ["<error>◆</error>", "<dim>◆</dim>", "<toolTitle>◆</toolTitle>"];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(glyphs(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(glyphs(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(glyphs(), wide);
+});
+
+const tones = ["error", "success", "toolTitle", "accent", "dim", "muted"];
+
+// The tone painting the first ◆ of a Pi tool row, read from the active theme.
+function markTone(rows) {
+	const palette = globalThis[themeKey];
+	const row = rows.find((line) => line.includes("◆"));
+	return tones.find((tone) => row.includes(`${palette.getFgAnsi(tone)}◆`));
+}
+
+function mountedRow(name, args, definition) {
+	return new ToolExecutionComponent(
+		name,
+		"call-1",
+		args,
+		{ showImages: false },
+		definition,
+		{ requestRender() {} },
+		"/",
+	);
+}
+
+test("a mounted built-in or MCP tool row repaints its ◆ for the density of each render after a resize, closed and open", (t) => {
+	initTheme("dark", false);
+	const bash = loadTools().get("bash");
+	const mcpName = "mcp__engram__mem_search";
+	const mcp = {
+		name: mcpName,
+		...compactToolRenderers(mcpName, () => ({ renderCall() {} })),
+	};
+	// Open, a built-in row shows Pi's own call, which carries no ◆.
+	const rows = (expanded) => [
+		...(expanded ? [] : [mountedRow("bash", { command: "true" }, bash)]),
+		mountedRow(mcpName, { query: "x" }, mcp),
+	];
+	const done = { content: [{ type: "text", text: "ok" }] };
+	const terminal = densityTerminal(t, 44);
+	const tonesAcross = (expanded, widths) => {
+		terminal.columns = widths[0];
+		const mounted = rows(expanded);
+		for (const row of mounted) {
+			row.markExecutionStarted();
+			row.updateResult(done, false);
+			row.setExpanded(expanded);
+		}
+		return widths.map((columns) => {
+			terminal.columns = columns;
+			return mounted.map((row) => markTone(row.render(columns)));
+		});
+	};
+	for (const expanded of [false, true]) {
+		const count = expanded ? 1 : 2;
+		const narrow = Array(count).fill("success");
+		const wide = Array(count).fill("toolTitle");
+		assert.deepEqual(
+			tonesAcross(expanded, [44, 60, 59, 100]),
+			[narrow, wide, narrow, wide],
+			`expanded: ${expanded}`,
+		);
+		assert.deepEqual(
+			tonesAcross(expanded, [100, 44]),
+			[wide, narrow],
+			`expanded: ${expanded}`,
+		);
+	}
+});
+
+test("below 60 columns a streamed tool call keeps a muted ◆ until execution starts, then the running tone, and 60 columns or more keeps today's colours", (t) => {
+	initTheme("dark", false);
+	const bash = loadTools().get("bash");
+	const terminal = densityTerminal(t, 44);
+	const stages = (columns) => {
+		terminal.columns = columns;
+		const row = mountedRow("bash", { command: "true" }, bash);
+		const seen = [markTone(row.render(columns))];
+		row.markExecutionStarted();
+		seen.push(markTone(row.render(columns)));
+		row.updateResult({ content: [{ type: "text", text: "ok" }] }, false);
+		seen.push(markTone(row.render(columns)));
+		return seen;
+	};
+	assert.deepEqual(stages(44), ["muted", "accent", "success"]);
+	assert.deepEqual(stages(59), ["muted", "accent", "success"]);
+	assert.deepEqual(stages(60), ["dim", "dim", "toolTitle"]);
+	terminal.columns = 44;
+	const failed = mountedRow("bash", { command: "false" }, bash);
+	failed.updateResult(
+		{ content: [{ type: "text", text: "exit 1" }], isError: true },
+		false,
+	);
+	assert.equal(markTone(failed.render(44)), "error");
 });
 
 const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");

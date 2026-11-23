@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+import type { ChildRecord } from "./child-sessions.ts";
+import type { TaskState } from "./todo-list.ts";
+
 const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const TERMINAL = Symbol.for("pi-workflow:visual-language:terminal");
 
@@ -91,6 +94,69 @@ export function themeVar(name: string, fallback: ThemeColor) {
 		const rgb = varRgb(source, name);
 		return rgb ? `\x1b[38;2;${rgb}m${text}\x1b[39m` : source.fg(fallback, text);
 	};
+}
+
+// The one state-glyph table (NS-14). Below 60 columns every component paints a
+// state from the shared scale; at 60 columns and above each mapping keeps
+// today's glyph where it differed (D-open-1).
+type Tone = ThemeColor | "cyan";
+type Mark = readonly [glyph: string, tone: Tone];
+
+const scale = {
+	pending: ["○", "muted"],
+	running: ["◐", "cyan"],
+	waiting: ["?", "warning"],
+	blocked: ["!", "warning"],
+	done: ["✓", "success"],
+	failed: ["✗", "error"],
+	cancelled: ["–", "muted"],
+	interrupted: ["⊘", "warning"],
+} as const satisfies Record<string, Mark>;
+
+type Mapping = readonly [narrow: Mark, wide?: Mark];
+
+type RunState = ChildRecord["state"] | "interrupted";
+
+const runStates: Record<RunState, Mapping> = {
+	queued: [scale.pending],
+	running: [scale.running],
+	waiting: [scale.waiting],
+	completed: [scale.done],
+	failed: [scale.failed],
+	cancelled: [scale.cancelled],
+	"timed out": [scale.failed, ["⧖", "error"]],
+	interrupted: [scale.interrupted],
+};
+
+const taskStates: Record<TaskState, Mapping> = {
+	pending: [scale.pending, ["□", "text"]],
+	"in progress": [scale.running, ["◐", "accent"]],
+	done: [scale.done],
+	blocked: [scale.blocked],
+};
+
+const cyan = themeVar("cyan", "accent");
+
+type StateMark = {
+	readonly glyph: string;
+	paint(source: Palette, text?: string): string;
+};
+
+function stateMark([narrow, wide = narrow]: Mapping): StateMark {
+	const [glyph, tone] = narrowScreen() ? narrow : wide;
+	return {
+		glyph,
+		paint: (source, text = glyph) =>
+			tone === "cyan" ? cyan(text, source) : source.fg(tone, text),
+	};
+}
+
+export function runStateMark(state: RunState) {
+	return stateMark(runStates[state]);
+}
+
+export function taskStateMark(state: TaskState) {
+	return stateMark(taskStates[state]);
 }
 
 export function themeBgVar(name: string) {

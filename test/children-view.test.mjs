@@ -1522,6 +1522,38 @@ test("a child whose transcript cannot be read stays listed with its identity", a
 	assert.match(text, /❯ Index the docs/);
 });
 
+test("below 60 terminal columns the Fleet view shows a timed-out child with the shared ✗ and keeps ⊘ for an interrupted one, and 60 columns or more keeps ⧖", async (t) => {
+	const root = withAgentDirectory(t);
+	const lost = record("9e01", { task: "Index the docs" });
+	const before = audited(t, [lost], { root });
+	await before.audit.close();
+	const slow = record("5636", {
+		state: "timed out",
+		endedAt: now - 1_000,
+		text: "Too slow.",
+	});
+	const view = open(fakeSessions([slow]), {
+		rows: 30,
+		audit: audited(t, [], { root }).audit,
+	});
+	const terminal = densityTerminal(t, 44);
+	const glyphs = async () => {
+		const text = await settle(view);
+		return ["5636", "9e01"].map(
+			(id) => new RegExp(`(\\S+) \\S*worker\\S* \\S*${id}`).exec(text)?.[1],
+		);
+	};
+	const narrow = ["✗", "⊘"];
+	const wide = ["⧖", "⊘"];
+	assert.deepEqual(await glyphs(), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(await glyphs(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(await glyphs(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(await glyphs(), wide);
+});
+
 test("children the catalog lost are reported, and r rebuilds the catalog so they are listed again", async (t) => {
 	const root = withAgentDirectory(t);
 	let failing = true;

@@ -779,6 +779,38 @@ test("below 60 terminal columns a result card puts its glyph in the lane, its re
 	assert.ok(plain(component, 43).includes("  alt+a  open in subagents view"));
 });
 
+test("below 60 terminal columns an ended card paints its glyph and state word from the shared scale, cancelled muted instead of dim, and 60 columns or more keeps dim", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const head = (state) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, state, text: "" },
+		}).render(43)[1];
+	const painted = (color) => {
+		for (const [state, tone] of [
+			["failed", "error"],
+			["timed out", "error"],
+			["cancelled", color],
+		]) {
+			const row = head(state);
+			assert.ok(row.includes(theme().fg(tone, "◆")), `${state} ${row}`);
+			assert.ok(row.includes(theme().fg(tone, state)), `${state} ${row}`);
+		}
+	};
+	painted("muted");
+	assert.equal(
+		stripVTControlCharacters(head("cancelled")).trimEnd(),
+		`◆ Subagent worker 5636 cancelled  1m 02s${" ".repeat(1)}›`,
+	);
+	terminal.columns = 60;
+	painted("dim");
+	terminal.columns = 59;
+	painted("muted");
+	terminal.columns = 100;
+	painted("dim");
+});
+
 const blocked = {
 	...details,
 	verdict: "blocked",
