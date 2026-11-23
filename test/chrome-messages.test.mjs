@@ -1465,9 +1465,17 @@ test("below 60 terminal columns a multi-line user message ends its last line wit
 		"   one two three four five six seven".padEnd(43),
 		`${" ".repeat(34)}11:55 AM `,
 	]);
-	const band = lines[3].indexOf("\x1b[48;5;");
-	assert.ok(band >= 0, JSON.stringify(lines[3]));
-	assert.equal(stripVTControlCharacters(lines[3].slice(0, band)), "");
+	const open = `\x1b[48;5;${code("userMessageBg")}m`;
+	const close = "\x1b[49m";
+	const row = ["A", "B", "C", "D"].reduce(
+		(line, mark) => line.replaceAll(`\x1b]133;${mark}\x07`, ""),
+		lines[3],
+	);
+	assert.ok(row.startsWith(open), JSON.stringify(row));
+	assert.ok(row.endsWith(close), JSON.stringify(row));
+	const band = row.slice(open.length, -close.length);
+	for (const reset of [close, "\x1b[0m", "\x1b[m", "\x1b[48;"])
+		assert.ok(!band.includes(reset), JSON.stringify(row));
 });
 
 test("below 60 terminal columns a click reaches assistant text across the full 40 columns, and the stamp, its own row and the right margin reach nothing", (t) => {
