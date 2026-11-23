@@ -880,8 +880,6 @@ const wideBytes = JSON.parse(
 	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
 );
 
-// Renders the chat at 59 and 60 columns in a 60-column terminal and at 99 and
-// 100 in a 100-column one, against the base's bytes for each width.
 function assertWideBytes(t, chat, golden) {
 	const terminal = densityTerminal(t, 60);
 	for (const [columns, widths] of [

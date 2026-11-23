@@ -1271,8 +1271,6 @@ test("a click on native Bash output below 60 terminal columns reaches the output
 	);
 });
 
-// Stands in for Markdown's click handler for one test: it handles every event
-// and records it in the returned list.
 function markdownClicks(t) {
 	const original = Markdown.prototype.handleMouse;
 	const seen = [];

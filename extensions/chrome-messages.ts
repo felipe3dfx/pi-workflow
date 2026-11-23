@@ -206,7 +206,7 @@ class Framed implements Component {
 			lines[0] += `${" ".repeat(pad + stampGap)}${tail}`;
 		} else if (frame.narrow && fits && stamp && lines.length > 0) {
 			const x = width - visibleWidth(tail);
-			if (x >= 0) this.placement = float(lines, tail, x, width);
+			if (x >= 0) this.placement = placeFloatingStamp(lines, tail, x, width);
 		}
 		return lines.map((line) => truncateToWidth(line, width));
 	}
@@ -237,9 +237,7 @@ class Framed implements Component {
 	}
 }
 
-// Ends the last line with the stamp at column x when it keeps the gap after
-// the text, or else gives the stamp a row of its own.
-function float(
+function placeFloatingStamp(
 	lines: string[],
 	tail: string,
 	x: number,
@@ -509,7 +507,6 @@ function updateContent(
 					() => ({
 						first: lane(),
 						rest: lane(),
-						// Below 60 columns one stamp floats on the message's last text.
 						stamp: stamped || !narrowScreen() ? stamp(message.timestamp) : "",
 					}),
 					inset,
