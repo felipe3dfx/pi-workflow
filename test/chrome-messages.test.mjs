@@ -1479,14 +1479,29 @@ function trimmed(lines) {
 test("below 60 terminal columns assistant Markdown indents each list level 2 columns and draws code blocks with a rail on every row, without fences or indent, and keeps tables, while other Markdown keeps Pi's layout", (t) => {
 	patched(t);
 	densityTerminal(t, 44);
-	for (const markdown of [plainMarkdown, getMarkdownTheme()]) {
+	const red = (text) => `\x1b[31m${text}\x1b[39m`;
+	const green = (text) => `\x1b[32m${text}\x1b[39m`;
+	const highlighted = {
+		...plainMarkdown,
+		codeBlockBorder: red,
+		highlightCode: (code) =>
+			code.split("\n").map((line) => line.replaceAll("const", green("const"))),
+	};
+	const rows = (markdown) => {
 		const component = markdownAnswer(markdown);
 		component.updateContent(
 			assistant([{ type: "text", text: nested }], { timestamp: undefined }),
 			false,
 		);
-		assert.deepEqual(trimmed(component.render(43)), narrowNested);
-	}
+		return component.render(43);
+	};
+	for (const markdown of [plainMarkdown, getMarkdownTheme(), highlighted])
+		assert.deepEqual(trimmed(rows(markdown)), narrowNested);
+	const code = rows(highlighted).find((row) => row.includes("compute(1, 2)"));
+	assert.ok(
+		code.includes(`${red("▎")} ${green("const")} answer`),
+		JSON.stringify(code),
+	);
 	assert.deepEqual(
 		trimmed(
 			new Markdown("- one\n  - two\n\n```\nx\n```", 0, 0, plainMarkdown).render(
