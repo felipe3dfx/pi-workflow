@@ -155,14 +155,19 @@ type ChildLines = {
 	lines: readonly string[];
 };
 
-type Entry = Target & { key: object; from: number };
 type Indent = (width: number) => Margin;
-type Place = { key: object; y: number };
+// A selectable head: a row or a group label, the `ordinal`-th selectable
+// segment of `component`, rendered at `row`.
+type Head = {
+	row: number;
+	component: Component;
+	ordinal: number;
+	kind: "row" | "group";
+};
 type View = {
 	width: number;
 	margin: Margin;
-	heads: number[];
-	places: Place[];
+	heads: Head[];
 	targets: Target[];
 	total: number;
 };
@@ -172,7 +177,7 @@ export type Viewport = {
 };
 
 const views = new WeakMap<Container, View>();
-const cursors = new WeakMap<Container, Place>();
+const cursors = new WeakMap<Container, Head>();
 const viewports = new WeakMap<Container, Viewport>();
 let current: Container | undefined;
 const cursorListeners = new Set<() => void>();
@@ -452,9 +457,15 @@ function renderChat(
 		else if (!hidden.has(seg)) state = compact(seg);
 	}
 	const lines: string[] = [];
-	const mouse: Entry[] = [];
-	const heads = new Set<number>();
-	const places = new Map<number, Place>();
+	const mouse: Target[] = [];
+	const heads = new Map<number, Head>();
+	const head = (seg: Seg, kind: Head["kind"]) =>
+		heads.set(lines.length, {
+			row: lines.length,
+			component: seg.child,
+			ordinal: ordinals.get(seg) ?? 0,
+			kind,
+		});
 	const ordinals = new Map<Seg, number>();
 	const counts = new Map<Component, number>();
 	for (const seg of segs)
@@ -472,8 +483,7 @@ function renderChat(
 		part[0] = carry + part[0];
 		carry = "";
 		if (seg.clickable) {
-			heads.add(lines.length);
-			places.set(lines.length, { key: seg.child, y: ordinals.get(seg) ?? 0 });
+			head(seg, "row");
 			if (seg.open && seg.role === "tool")
 				for (let i = 1; i < part.length; i++) bodies.add(lines.length + i);
 		}
@@ -486,8 +496,6 @@ function renderChat(
 				component:
 					seg.from === 0 ? seg.child : shifted(seg.child, seg.from, all.length),
 				height: part.length,
-				key: seg.child,
-				from: seg.from,
 			});
 		last = { child: seg.child, next: seg.to };
 	};
@@ -496,22 +504,18 @@ function renderChat(
 			carry += (rendered.get(seg.child) ?? []).slice(seg.from, seg.to).join("");
 			return;
 		}
-		const head = headers.get(seg);
-		if (head) {
-			heads.add(lines.length);
-			places.set(lines.length, {
-				key: seg.child,
-				y: -1 - (ordinals.get(seg) ?? 0),
-			});
-			lines.push(carry + head.render(width)[0]);
+		const label = headers.get(seg);
+		if (label) {
+			head(seg, "group");
+			lines.push(carry + label.render(width)[0]);
 			carry = "";
-			mouse.push({ component: head, height: 1, key: seg.child, from: -1 });
+			mouse.push({ component: label, height: 1 });
 			last = undefined;
 		}
 		if (!hidden.has(seg)) emit(seg);
 	});
 	if (carry && lines.length > 0) lines[lines.length - 1] += carry;
-	return { lines, mouse, heads, places, bodies };
+	return { lines, mouse, heads, bodies };
 }
 
 function pointAt(line: string) {
@@ -576,10 +580,12 @@ function cursorLine(container: Container) {
 	const cursor = cursors.get(container);
 	const view = views.get(container);
 	if (!cursor || !view) return undefined;
-	const at = view.places.findIndex(
-		(place) => place.key === cursor.key && place.y === cursor.y,
-	);
-	return at >= 0 ? view.heads[at] : undefined;
+	return view.heads.find(
+		(head) =>
+			head.component === cursor.component &&
+			head.ordinal === cursor.ordinal &&
+			head.kind === cursor.kind,
+	)?.row;
 }
 
 function selected(line: string, width: number) {
@@ -597,15 +603,15 @@ export const transcriptCursor = {
 		const view = current && views.get(current);
 		if (!current || !view || view.heads.length === 0) return false;
 		const line = cursorLine(current);
-		const at = line === undefined ? -1 : view.heads.indexOf(line);
+		const at = view.heads.findIndex((head) => head.row === line);
 		const next =
 			at < 0
 				? view.heads.length - 1
 				: Math.min(view.heads.length - 1, Math.max(0, at + delta));
 		const head = view.heads[next];
 		const entering = !cursors.has(current);
-		cursors.set(current, view.places[next]);
-		viewports.get(current)?.reveal(head, view.total);
+		cursors.set(current, head);
+		viewports.get(current)?.reveal(head.row, view.total);
 		if (entering) for (const listener of cursorListeners) listener();
 		return true;
 	},
@@ -671,12 +677,10 @@ export function patchChat(
 				lines: chat.lines,
 			};
 			current = container;
-			const heads = [...chat.heads].sort((a, b) => a - b);
 			views.set(container, {
 				width,
 				margin,
-				heads,
-				places: heads.map((line) => chat.places.get(line) as Place),
+				heads: [...chat.heads.values()],
 				targets,
 				total: chat.lines.length,
 			});

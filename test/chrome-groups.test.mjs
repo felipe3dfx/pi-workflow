@@ -805,9 +805,7 @@ test("at 60 and 100 terminal columns the selection background reaches the last c
 	}
 });
 
-function wideTranscript(t) {
-	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
-	t.after(() => setCapabilityOverrides({}));
+function advisorRow(t, durationMs) {
 	const dir = withAgentDirectory(t);
 	writeAdvisorModel(dir, {
 		model: "anthropic/claude-opus-5",
@@ -819,6 +817,45 @@ function wideTranscript(t) {
 			advisor = definition;
 		},
 	});
+	const row = new ToolExecutionComponent(
+		"advisor",
+		"call-advisor",
+		{},
+		{ showImages: false },
+		compactToolRenderers("advisor", () => advisor),
+		{ requestRender() {} },
+		"/",
+	);
+	row.updateResult(
+		{
+			content: [{ type: "text", text: "Sound." }],
+			details: { model: "anthropic/claude-opus-5", thinking: "high" },
+			isError: false,
+			durationMs,
+		},
+		false,
+	);
+	return row;
+}
+
+function explorationBudgetNotice() {
+	return new CustomMessageComponent(
+		{
+			role: "custom",
+			customType: "pi-workflow-exploration-budget",
+			content: "Continue discovery in an explore child.",
+			details: { lookups: 40, textBytes: 120_000 },
+			display: true,
+		},
+		renderers.get("pi-workflow-exploration-budget"),
+		markdownTheme,
+		1,
+	);
+}
+
+function wideTranscript(t) {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
 	const session = chat(t);
 	const { mode, say, tool, card } = session;
 	const ui = { requestRender() {} };
@@ -833,39 +870,8 @@ function wideTranscript(t) {
 	bash.appendOutput("hello world");
 	bash.setComplete(0, false);
 	mode.chatContainer.addChild(bash);
-	const advice = new ToolExecutionComponent(
-		"advisor",
-		"call-advisor",
-		{},
-		{ showImages: false },
-		compactToolRenderers("advisor", () => advisor),
-		ui,
-		"/",
-	);
-	advice.updateResult(
-		{
-			content: [{ type: "text", text: "Sound." }],
-			details: { model: "anthropic/claude-opus-5", thinking: "high" },
-			isError: false,
-			durationMs: 15_000,
-		},
-		false,
-	);
-	mode.chatContainer.addChild(advice);
-	mode.chatContainer.addChild(
-		new CustomMessageComponent(
-			{
-				role: "custom",
-				customType: "pi-workflow-exploration-budget",
-				content: "Continue discovery in an explore child.",
-				details: { lookups: 40, textBytes: 120_000 },
-				display: true,
-			},
-			renderers.get("pi-workflow-exploration-budget"),
-			markdownTheme,
-			1,
-		),
-	);
+	mode.chatContainer.addChild(advisorRow(t, 15_000));
+	mode.chatContainer.addChild(explorationBudgetNotice());
 	return session;
 }
 
@@ -910,20 +916,7 @@ test("below 60 terminal columns a click on the last content cell of a thinking h
 	say([said("Next.")], "stop");
 	card("pi-workflow-child-result", result("1111"));
 	say([said("Then.")], "stop");
-	mode.chatContainer.addChild(
-		new CustomMessageComponent(
-			{
-				role: "custom",
-				customType: "pi-workflow-exploration-budget",
-				content: "Continue discovery in an explore child.",
-				details: { lookups: 40, textBytes: 120_000 },
-				display: true,
-			},
-			renderers.get("pi-workflow-exploration-budget"),
-			markdownTheme,
-			1,
-		),
-	);
+	mode.chatContainer.addChild(explorationBudgetNotice());
 	for (const head of [
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
@@ -1145,37 +1138,9 @@ test("crossing 60 terminal columns onto exactly the end of the transcript keeps 
 });
 
 test("below 60 terminal columns the advisor card takes the row's lane through the row margin, which a click on its last content cell reaches and a click on the margin does not", (t) => {
-	const dir = withAgentDirectory(t);
-	writeAdvisorModel(dir, {
-		model: "anthropic/claude-opus-5",
-		thinking: "high",
-	});
-	let advisor;
-	createAdvisor(dir).offer({
-		registerTool: (definition) => {
-			advisor = definition;
-		},
-	});
 	const { mode, render } = chat(t);
 	densityTerminal(t, 44);
-	const card = new ToolExecutionComponent(
-		"advisor",
-		"call-advisor",
-		{},
-		{ showImages: false },
-		compactToolRenderers("advisor", () => advisor),
-		{ requestRender() {} },
-		"/",
-	);
-	card.updateResult(
-		{
-			content: [{ type: "text", text: "Sound." }],
-			details: { model: "anthropic/claude-opus-5", thinking: "high" },
-			isError: false,
-			durationMs: 9_000,
-		},
-		false,
-	);
+	const card = advisorRow(t, 9_000);
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
 	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
