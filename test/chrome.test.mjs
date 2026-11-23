@@ -374,6 +374,94 @@ test("the footer shows Pi's real keys for the idle and working contexts, and the
 	);
 });
 
+test("below 60 terminal columns the footer joins Key action hints with · from the edge, expand first when idle and third while working", (t) => {
+	const terminal = densityTerminal(t, 44);
+	const idle = () => footerHints(false, undefined, resolve);
+	const working = () => footerHints(true, undefined, resolve);
+	assert.deepEqual(plain(renderFooter(theme, idle(), 44)), [
+		"Ctrl+O expand · Ctrl+P model",
+	]);
+	assert.deepEqual(plain(renderFooter(theme, working(), 44)), [
+		"Esc interrupt · Enter steer · Ctrl+O expand",
+	]);
+	terminal.columns = 59;
+	assert.deepEqual(plain(renderFooter(theme, idle(), 59)), [
+		"Ctrl+O expand · Ctrl+P model · Shift+Tab thinking",
+	]);
+	assert.deepEqual(plain(renderFooter(theme, working(), 59)), [
+		"Esc interrupt · Enter steer · Ctrl+O expand",
+	]);
+	assert.deepEqual(
+		plain(renderFooter(theme, idle(), 59, ["build ok", "lsp: ts"])),
+		["Ctrl+O expand · Ctrl+P model · Shift+Tab thinking  build ok"],
+	);
+});
+
+const sgrNames = [
+	"accent",
+	"border",
+	"borderAccent",
+	"dim",
+	"muted",
+	"text",
+	"thinkingHigh",
+	"mdHeading",
+	"selectedBg",
+	"warning",
+	"error",
+];
+const sgr = (color) => 16 + sgrNames.indexOf(color);
+// The theme `test/fixtures/wide-input.json` was captured with on the base.
+const sgrTheme = {
+	fg: (color, text) => `\x1b[38;5;${sgr(color)}m${text}\x1b[39m`,
+	bold: (text) => `\x1b[1m${text}\x1b[22m`,
+	bg: (color, text) => `\x1b[48;5;${sgr(color)}m${text}\x1b[49m`,
+};
+const wideInput = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-input.json", import.meta.url), "utf8"),
+);
+
+test("at 60 and 100 terminal columns the footer and the editor render the base's bytes", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const label = () =>
+		modelLabel(
+			{
+				model: { id: "claude-opus-5-5", reasoning: true },
+				thinkingLevel: "high",
+			},
+			sgrTheme,
+		);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		const footer = (working, statuses) =>
+			renderFooter(
+				sgrTheme,
+				footerHints(working, undefined, resolve),
+				columns,
+				statuses,
+			);
+		assert.deepEqual(
+			{
+				idle: footer(false, ["build ok", "lsp: ts"]),
+				working: footer(true),
+			},
+			wideInput.footer[columns],
+		);
+		const input = createChromeEditor(
+			{ terminal: { rows: 40 }, requestRender() {} },
+			{ borderColor: (text) => text, selectList: {} },
+			{ matches: () => false },
+			{ theme: () => sgrTheme, label },
+		);
+		const empty = input.render(columns);
+		input.setText("hello world");
+		assert.deepEqual(
+			{ empty, typed: input.render(columns) },
+			wideInput.editor[columns],
+		);
+	}
+});
+
 test("the footer drops the hints that do not fit instead of cutting one in half", () => {
 	const hints = footerHints(false, undefined, resolve);
 	assert.deepEqual(plain(renderFooter(theme, hints, 37)), [

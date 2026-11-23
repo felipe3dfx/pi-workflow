@@ -296,16 +296,62 @@ const workingHints: [Keybinding, string][] = [
 	["app.tools.expand", "expand"],
 ];
 
+// Narrow footers fit two or three hints, so they lead with the ones that matter most (NS-26).
+const narrowIdleHints: [Keybinding, string][] = [
+	["app.tools.expand", "expand"],
+	["app.model.cycleForward", "model"],
+	["app.thinking.cycle", "thinking"],
+	["app.clear", "clear"],
+];
+
+const narrowWorkingHints: [Keybinding, string][] = [
+	["app.interrupt", "interrupt"],
+	["tui.input.submit", "steer"],
+	["app.tools.expand", "expand"],
+	["app.message.followUp", "follow-up"],
+];
+
 export function footerHints(
 	working: boolean,
 	panel: Hint[] | undefined,
 	keys: KeyResolver,
 ): Hint[] {
 	if (panel) return panel;
-	return (working ? workingHints : idleHints).flatMap(([binding, action]) => {
+	const narrow = narrowScreen();
+	const order = working
+		? narrow
+			? narrowWorkingHints
+			: workingHints
+		: narrow
+			? narrowIdleHints
+			: idleHints;
+	return order.flatMap(([binding, action]) => {
 		const key = displayKey(keys(binding).split("/")[0] ?? "");
 		return key ? [{ key, action }] : [];
 	});
+}
+
+// Narrow hint rows read `Key action`, joined by ` · ` and wrapped between hints (NS-12).
+export function keyHintRows(theme: ChromeTheme, hints: Hint[], width: number) {
+	const separator = " · ";
+	const rows: string[] = [];
+	let line = "";
+	let used = 0;
+	for (const hint of hints) {
+		const key = terminalSafeLine(hint.key);
+		const action = terminalSafeLine(hint.action);
+		const size = visibleWidth(`${key} ${action}`);
+		const painted = `${theme.bold(theme.fg("text", key))}${theme.fg("dim", ` ${action}`)}`;
+		if (line && used + separator.length + size <= width) {
+			line += theme.fg("borderAccent", separator) + painted;
+			used += separator.length + size;
+			continue;
+		}
+		if (line) rows.push(line);
+		line = size > width ? truncateToWidth(painted, width, "…") : painted;
+		used = Math.min(size, width);
+	}
+	return line ? [...rows, line] : rows;
 }
 
 export function renderFooter(
@@ -314,11 +360,12 @@ export function renderFooter(
 	width: number,
 	statuses: string[] = [],
 ) {
-	const room = width - marginFor(width) * 2;
+	const narrow = narrowScreen();
+	const room = narrow ? width : width - marginFor(width) * 2;
 	const separator = theme.fg("borderAccent", "  │  ");
-	let line = "";
-	let used = 0;
-	for (const hint of hints) {
+	let line = narrow ? (keyHintRows(theme, hints, room)[0] ?? "") : "";
+	let used = visibleWidth(line);
+	for (const hint of narrow ? [] : hints) {
 		const key = terminalSafeLine(hint.key);
 		const action = terminalSafeLine(hint.action);
 		const gap = line ? 5 : 0;
@@ -337,8 +384,8 @@ export function renderFooter(
 		right += `${rightUsed ? "  " : ""}${theme.fg("dim", text)}`;
 		rightUsed += size;
 	}
-	if (!right) return indented([truncateToWidth(line, room)], width);
-	return indented([spread(line, right, room)], width);
+	const shown = right ? spread(line, right, room) : truncateToWidth(line, room);
+	return narrow ? [shown] : indented([shown], width);
 }
 
 export function registerChrome(
@@ -616,8 +663,17 @@ export function modelLabel(
 ) {
 	const model = ctx.model;
 	if (!model) return "";
-	const id = plainText(model.id);
+	const narrow = narrowScreen();
+	// Narrow captions drop the provider, including the `claude-` the model id repeats (NS-27; owner, #415).
+	const id = narrow
+		? plainText(model.id)
+				.replace(/^.*\//, "")
+				.replace(/^claude-/, "")
+		: plainText(model.id);
 	const level = ctx.thinkingLevel;
 	if (!model.reasoning || !level) return theme.fg("dim", id);
-	return theme.fg(thinkingTokens[level], id) + theme.fg("dim", ` (${level})`);
+	return (
+		theme.fg(thinkingTokens[level], id) +
+		theme.fg("dim", narrow ? ` · ${level}` : ` (${level})`)
+	);
 }
