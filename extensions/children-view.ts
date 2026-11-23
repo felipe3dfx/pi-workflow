@@ -75,6 +75,7 @@ import {
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	formatDuration,
+	legacyDurationWidth,
 	minThoughtMs,
 	narrowScreen,
 	spread,
@@ -139,11 +140,11 @@ function wrap(text: string, width: number) {
 		.flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width)));
 }
 
-function steerMarks(child: ChildRecord) {
+function steerMarks(child: ChildRecord, compact = false) {
+	const noun = (count: number) =>
+		compact ? "" : count === 1 ? "steer " : "steers ";
 	const mark = (count: number, state: string) =>
-		count === 0
-			? []
-			: [`${count} ${count === 1 ? "steer" : "steers"} ${state}`];
+		count === 0 ? [] : [`${count} ${noun(count)}${state}`];
 	return [
 		...mark(child.steering?.length ?? 0, "pending"),
 		...mark(child.undelivered?.length ?? 0, "undelivered"),
@@ -1506,30 +1507,127 @@ function createChildrenView(
 					? `${theme.fg("text", `#${child.todo} ${terminalSafeLine(task)}`)} ${theme.fg(color, step)}`
 					: theme.fg(color, step);
 			const state = stateOf(item, now);
-			const spend = usage(spent(sessions.thread(child.id)));
-			const marks = [
-				...steerMarks(child),
-				...(item.listed && !item.listed.health.complete
+			const used = spent(sessions.thread(child.id));
+			const spend = usage(used);
+			const flags =
+				item.listed && !item.listed.health.complete
 					? ["incomplete transcript"]
-					: []),
-			];
-			const right = (rest: string[]) =>
+					: [];
+			const marks = [...steerMarks(child), ...flags];
+			const right = (rest: string[], warn = marks) =>
 				[
-					...(marks.length > 0 ? [theme.fg("warning", marks.join(" · "))] : []),
+					...(warn.length > 0 ? [theme.fg("warning", warn.join(" · "))] : []),
 					...(rest.length > 0 ? [theme.fg("dim", rest.join(" · "))] : []),
 				].join(theme.fg("dim", " · "));
+			const clock = timeOf(item, now);
+			const steers = steerMarks(child, true);
+			const dot = theme.fg("dim", " · ");
+			// One overflow routine for both layouts keeps the whole time and a complete Steer state, then shows the
+			// transcript warning whole, as `partial log`, or leaves it to the detail; each budget is tried in turn,
+			// and a lone label is cut only when no complete candidate fits the last one.
+			const fit = (
+				time: string,
+				budgets: number[],
+				shapes: [string[], string][],
+				spends: string[][],
+				lead: string[] = [],
+			) => {
+				const warnings = flags.length > 0 ? [flags, ["partial log"], []] : [[]];
+				const candidates = [
+					...lead,
+					...warnings.flatMap((warning) =>
+						shapes.flatMap(([labels, gap]) =>
+							spends.map((rest) => {
+								const warn = [...labels, ...warning];
+								const dim = theme.fg("dim", [time, ...rest].join(" · "));
+								return warn.length > 0
+									? `${theme.fg("warning", warn.join(" · "))}${gap}${dim}`
+									: dim;
+							}),
+						),
+					),
+					...(steers.length === 1
+						? [
+								steers[0],
+								...(child.undelivered?.length
+									? [`${child.undelivered.length} not sent`]
+									: []),
+							].map(
+								(steer) =>
+									`${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
+							)
+						: []),
+				];
+				for (const budget of budgets) {
+					const found = candidates.find((text) => visibleWidth(text) <= budget);
+					if (found) return found;
+				}
+				const [labels, gap] = shapes.at(-1) ?? [steers, dot];
+				const room =
+					(budgets.at(-1) ?? width) - visibleWidth(gap) - visibleWidth(time);
+				return `${truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…")}${gap}${theme.fg("dim", time)}`;
+			};
+			// The whole head and its gap come first where the base's whole-second time kept them, and on narrow
+			// screens; otherwise, and when nothing fits beside them, the tail alone takes the row as before.
+			const grown =
+				item.live && child.state !== "queued"
+					? visibleWidth(clock) -
+						legacyDurationWidth(
+							(child.endedAt ?? now) - (child.startedAt ?? child.createdAt),
+						)
+					: 0;
+			const kept =
+				narrow ||
+				visibleWidth(head) + 1 + visibleWidth(right([clock])) - grown <= width;
 			const tail =
-				[[state, ...spend], [state], [timeOf(item, now)]]
-					.map(right)
+				[[state, ...spend], [state], [clock]]
+					.map((rest) => right(rest))
 					.find(
 						(text) => visibleWidth(head) + 1 + visibleWidth(text) <= width,
-					) ?? right([timeOf(item, now)]);
+					) ??
+				(marks.length > 0
+					? fit(
+							clock,
+							[...(kept ? [width - visibleWidth(head) - 1] : []), width - 1],
+							[
+								[steerMarks(child), dot],
+								[steerMarks(child), " "],
+								[steers, " "],
+							],
+							[[]],
+						)
+					: right([clock]));
 			const room = width - visibleWidth(head) - visibleWidth(tail) - 2;
+			const timeOnSecondLine =
+				item.live &&
+				child.state !== "queued" &&
+				visibleWidth(head) + 1 + visibleWidth(state) > width;
+			const first = () =>
+				visibleWidth(head) + 1 + visibleWidth(child.state) > width
+					? head
+					: spread(head, theme.fg("dim", child.state), width);
+			const second = () => {
+				const time = runTime(child, now);
+				const payload = fit(
+					time,
+					[width],
+					[[steers, dot]],
+					[spend, usage({ ...used, cost: 0 }), []],
+					[right([time, ...spend])],
+				);
+				const free = width - visibleWidth(payload);
+				const room = free - 5;
+				return room >= Math.min(visibleWidth(detail), 4)
+					? spread(`    ${detail}`, payload, width)
+					: `${" ".repeat(Math.max(0, free))}${payload}`;
+			};
 			const shown = two
-				? [
-						spread(head, theme.fg("dim", state), width),
-						spread(`    ${detail}`, right(spend), width),
-					]
+				? timeOnSecondLine
+					? [first(), second()]
+					: [
+							spread(head, theme.fg("dim", state), width),
+							spread(`    ${detail}`, right(spend), width),
+						]
 				: [
 						spread(
 							room > 1 ? `${head} ${truncateToWidth(detail, room, "…")}` : head,
@@ -1565,7 +1663,7 @@ function createChildrenView(
 		};
 	}
 
-	function header(item: Shown, width: number, focused: boolean) {
+	function header(item: Shown, width: number, focused: boolean, rows: number) {
 		const { child } = item;
 		const state = stateOf(item, Date.now());
 		const meta = [
@@ -1581,12 +1679,18 @@ function createChildrenView(
 			info?.health ?? item.listed?.health,
 			notes.size > 0 ? [...notes].join(" ") : undefined,
 		);
-		return [
-			spread(
-				`${glyph(item)} ${theme.bold(theme.fg(focused ? "accent" : "text", terminalSafeLine(childName(child))))}`,
-				theme.fg("dim", terminalSafeLine(state)),
-				width,
-			),
+		const title = spread(
+			`${glyph(item)} ${theme.bold(theme.fg(focused ? "accent" : "text", terminalSafeLine(childName(child))))}`,
+			theme.fg("dim", terminalSafeLine(state)),
+			width,
+		);
+		const warning =
+			capture &&
+			theme.fg(
+				"warning",
+				truncateToWidth(terminalSafeLine(capture), width, "…"),
+			);
+		const rest = [
 			theme.fg("dim", truncateToWidth(terminalSafeLine(meta), width, "…")),
 			contextRow(
 				theme,
@@ -1602,15 +1706,14 @@ function createChildrenView(
 					"…",
 				),
 			),
-			...(capture
-				? [
-						theme.fg(
-							"warning",
-							truncateToWidth(terminalSafeLine(capture), width, "…"),
-						),
-					]
-				: []),
 		];
+		if (!warning) return [title, ...rest].slice(0, rows);
+		// The capture warning comes last, but a short detail would slice it off: it then goes ahead of the metadata.
+		return (
+			rest.length + 2 <= rows
+				? [title, ...rest, warning]
+				: [title, warning, ...rest]
+		).slice(0, rows);
 	}
 
 	function head(item: Shown, width: number, focused: boolean): Block[] {
@@ -1708,7 +1811,7 @@ function createChildrenView(
 		focused: boolean,
 	) {
 		const { child } = item;
-		const top = header(item, width, focused).slice(0, rows);
+		const top = header(item, width, focused, rows);
 		detailRoom = Math.max(1, rows - top.length - 1);
 		const style = {
 			child: child.id,

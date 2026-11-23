@@ -82,6 +82,159 @@ const plain = (component, width = 90) =>
 		.render(width)
 		.map((line) => stripVTControlCharacters(line).trimEnd());
 
+test("a collapsed result reads its elapsed time in the shared duration format on narrow and wide terminals", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	for (const [columns, width] of [
+		[44, 43],
+		[100, 100],
+	]) {
+		terminal.columns = columns;
+		for (const [elapsedMs, label] of [
+			[3_240, "3.2s"],
+			[12_400, "12s"],
+			[65_000, "1m 05s"],
+			[3_900_000, "1h 05m"],
+		]) {
+			const [, row] = plain(
+				card({
+					customType: "pi-workflow-child-result",
+					details: { ...details, elapsedMs },
+				}),
+				width,
+			);
+			if (columns < 60)
+				assert.equal(row, `${`◆ Subagent worker 5636  ${label}`.padEnd(41)}›`);
+			else assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
+		}
+	}
+});
+
+test("below 60 terminal columns an expanded result keeps its whole time beside its model with a single space before them", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	component.setExpanded(true);
+	assert.equal(
+		plain(component, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-mini · 3.2s",
+	);
+	const longer = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini-preview",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	longer.setExpanded(true);
+	assert.equal(
+		plain(longer, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-min… · 3.2s",
+	);
+});
+
+test("a result header too tight for its metadata keeps the whole time and the pinned › before its gap and its model", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 39);
+	const partial = {
+		...details,
+		verdict: "partial",
+		result: { verdict: "partial", reason: "Database access is missing" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 3_240,
+	};
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	assert.equal(
+		plain(result(partial), 38)[1],
+		"◆ Subagent worker 5636 partial 3.2s ›",
+	);
+	terminal.columns = 60;
+	const expanded = result(partial);
+	expanded.setExpanded(true);
+	assert.equal(
+		plain(expanded, 59)[1],
+		"   ◆ Subagent worker 5636 partial claude-opus-4-6 · 3.2s",
+	);
+	terminal.columns = 44;
+	const watchdog = {
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subagent worker 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(plain(open, 43)[1], "◆ Subagent worker 5636 timed out 30m 00s");
+});
+
+test("a wide result header keeps a time that grew across a minute rollover with a single space before its model", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 60);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const rollover = result({
+		verdict: "pass",
+		result: { verdict: "pass" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 599_500,
+	});
+	rollover.setExpanded(true);
+	assert.equal(
+		plain(rollover, 59)[1],
+		"   ◆ Subagent worker 5636 pass claude-opus-4-6 · 10m 00s",
+	);
+});
+
+test("a collapsed Explorer watchdog result shortens, then omits, the Subagent label before its whole time and the pinned ›", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const watchdog = {
+		role: "explore",
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subage… explore 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(plain(open, 43)[1], "◆ Subagent explore 5636 timed out 30m 00s");
+	terminal.columns = 38;
+	assert.equal(
+		plain(result(watchdog), 37)[1],
+		"◆ explore 5636 timed out 30m 00s   ›",
+	);
+});
+
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
 	assert.deepEqual(
@@ -718,7 +871,7 @@ test("below 60 terminal columns an open result card cuts its long head with … 
 	component.setExpanded(true);
 	assert.deepEqual(plain(component, 43).slice(0, 3), [
 		"",
-		"◆ Subagent worker 5636 blocked  gpt-6-lun…",
+		"◆ Subagent worker 5636 blocked g… · 1m 02s",
 		"  Task Run sleep 60 to wait 60 seconds",
 	]);
 });

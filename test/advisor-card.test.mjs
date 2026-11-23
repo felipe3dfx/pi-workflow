@@ -170,7 +170,7 @@ test("advice of four rendered lines or fewer shows whole with no expand hint, co
 	const short = card(done("- one\n- two\n- three\n- four", 9_000));
 	const expected = [
 		"",
-		"   ◇ Advisor  9s · claude-opus-5 (high)",
+		"   ◇ Advisor  9.0s · claude-opus-5 (high)",
 		"     - one",
 		"     - two",
 		"     - three",
@@ -219,7 +219,7 @@ test("a failed consultation shows failed and its reason under the header in the 
 	]) {
 		const shown = card(failed(failure, text));
 		const lines = plain(shown, 140);
-		assert.equal(lines[1], "   ◇ Advisor failed  3s · claude-opus-5 (high)");
+		assert.equal(lines[1], "   ◇ Advisor failed  3.0s · claude-opus-5 (high)");
 		assert.deepEqual(
 			lines.slice(2),
 			text.split("\n").map((line) => `     ${line}`),
@@ -241,7 +241,7 @@ test("a failed consultation shows failed and its reason under the header in the 
 		),
 		[
 			"",
-			"   ◇ Advisor failed  3s",
+			"   ◇ Advisor failed  3.0s",
 			"     No advisor model is set. Choose one with /workflow:advisor.",
 		],
 	);
@@ -254,7 +254,7 @@ test("a stopped or refused consultation shows its word and its text dimmed", asy
 	);
 	assert.deepEqual(plain(stopped), [
 		"",
-		"   ◇ Advisor stopped  3s · claude-opus-5 (high)",
+		"   ◇ Advisor stopped  3.0s · claude-opus-5 (high)",
 		"     Advisor consultation stopped by the operator.",
 	]);
 	const refused = card(
@@ -262,7 +262,7 @@ test("a stopped or refused consultation shows its word and its text dimmed", asy
 	);
 	assert.deepEqual(plain(refused), [
 		"",
-		"   ◇ Advisor refused  3s · claude-opus-5 (high)",
+		"   ◇ Advisor refused  3.0s · claude-opus-5 (high)",
 		"     Advisor is disabled. Enable it in /workflow:config.",
 	]);
 	const [, stoppedHead, stoppedBody] = stopped.render(100);
@@ -313,7 +313,7 @@ test("narrow widths drop the hint first, then shorten the model id in the middle
 	);
 	assert.equal(
 		plain(long(1_000), 39)[1],
-		"   ◇ Advisor  1s · anthr…t-1m (xh...",
+		"   ◇ Advisor  1.0s · anthr…t-1m (...",
 	);
 });
 
@@ -515,12 +515,12 @@ test("with the advisor unseated a past card falls back to plain text without the
 	]);
 	assert.deepEqual(plain(broken), [
 		"",
-		"   Advisor failed  3s · claude-opus-5 (high)",
+		"   Advisor failed  3.0s · claude-opus-5 (high)",
 		"   401 invalid x-api-key",
 	]);
 	assert.deepEqual(plain(long), [
 		"",
-		"   Advisor failed  3s · claude-opus-5 (high)",
+		"   Advisor failed  3.0s · claude-opus-5 (high)",
 		"   e1",
 		"   e2",
 		"   e3",
@@ -531,7 +531,7 @@ test("with the advisor unseated a past card falls back to plain text without the
 	seat(["advisor"]);
 	assert.equal(
 		plain(broken)[1],
-		"   ◇ Advisor failed  3s · claude-opus-5 (high)",
+		"   ◇ Advisor failed  3.0s · claude-opus-5 (high)",
 	);
 
 	seat(["child-session"]);

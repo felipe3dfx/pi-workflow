@@ -32,6 +32,7 @@ import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	affordance,
+	legacyDurationWidth,
 	narrowScreen,
 	pinRight,
 	spread,
@@ -77,28 +78,61 @@ function reason(card: Card) {
 	return card.result?.reason;
 }
 
-function header(theme: Theme, card: Card, question: boolean, open: boolean) {
-	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
-	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
+function header(
+	theme: Theme,
+	card: Card,
+	question: boolean,
+	open: boolean,
+	width = Number.POSITIVE_INFINITY,
+) {
+	const glyph = theme.fg(tone(card, question), "◆");
+	const label = (text: string) => theme.bold(theme.fg("muted", text));
+	let rest = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	if (question)
-		return `${line} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
+		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
-		line += ` ${theme.fg(tone(card, question), card.state)}`;
+		rest += ` ${theme.fg(tone(card, question), card.state)}`;
 	if (card.verdict)
-		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
-	const meta = [
+		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
+	const line = `${glyph} ${label("Subagent")} ${rest}`;
+	const model =
 		open &&
-			card.model &&
-			childModelLine({
-				model: card.model,
-				thinking: card.thinking,
-			}),
+		card.model &&
+		childModelLine({
+			model: card.model,
+			thinking: card.thinking,
+		});
+	const time =
 		card.elapsedMs !== undefined &&
-			childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0),
-	].filter(Boolean);
-	return meta.length > 0
-		? `${line}  ${theme.fg("dim", meta.join(" · "))}`
-		: line;
+		childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0);
+	const meta = [model, time].filter(Boolean).join(" · ");
+	if (!meta) return line;
+	const full = `${line}  ${theme.fg("dim", meta)}`;
+	if (!time || visibleWidth(full) <= width) return full;
+	// Wide rows keep the base's layout unless the base's whole seconds fit where the new time does not.
+	const legacy =
+		visibleWidth(full) -
+		visibleWidth(time) +
+		legacyDurationWidth(card.elapsedMs ?? 0);
+	if (!narrowScreen() && legacy > width) return full;
+	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none,
+	// then a shorter Subagent label, then none; the role, id and state stay whole.
+	const cut = narrowScreen() ? "…" : "...";
+	const dim = (text: string) => theme.fg("dim", text);
+	const tight = `${line} ${dim(meta)}`;
+	if (visibleWidth(tight) <= width) return tight;
+	const room = width - visibleWidth(line) - 1 - visibleWidth(` · ${time}`);
+	const short = model && room > 1 && truncateToWidth(model, room, cut);
+	if (short) return `${line} ${dim(`${short} · ${time}`)}`;
+	const timed = `${line} ${dim(time)}`;
+	const labelRoom = width - visibleWidth(`${glyph}  ${rest} ${time}`);
+	if (visibleWidth(timed) <= width) return timed;
+	if (labelRoom <= visibleWidth(cut)) {
+		// No readable label fits: drop Subagent and its space before clipping the time.
+		const bare = `${glyph} ${rest} ${dim(time)}`;
+		return visibleWidth(bare) <= width ? bare : timed;
+	}
+	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
 }
 
 export function clean(text: string) {
@@ -258,7 +292,9 @@ class ResultCard implements Component {
 			narrow ? wrapTextWithAnsi(t.fg("dim", text), inner) : [t.fg("dim", text)];
 		return frame(
 			outer,
-			header(t, this.card, this.question, open),
+			// A pinned › takes the row's last cell and the space before it.
+			(width) =>
+				header(t, this.card, this.question, open, pinned ? width - 2 : width),
 			hint,
 			(inner) => {
 				const lines: string[] = [];

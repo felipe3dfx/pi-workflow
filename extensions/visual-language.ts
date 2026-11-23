@@ -103,13 +103,23 @@ export function themeBgVar(name: string) {
 export const minThoughtMs = 1_000;
 
 export function formatDuration(ms: number) {
-	const tenths = Math.round(Math.max(0, ms) / 100);
+	const elapsed = Math.max(0, ms);
+	const tenths = Math.round(elapsed / 100);
 	if (tenths < 100) return `${(tenths / 10).toFixed(1)}s`;
-	const whole = Math.round(tenths / 10);
+	const whole = Math.round(elapsed / 1000);
 	if (whole < 60) return `${whole}s`;
 	const minutes = Math.floor(whole / 60);
-	if (minutes < 60) return `${minutes}m${whole % 60}s`;
-	return `${Math.floor(minutes / 60)}h${minutes % 60}m`;
+	const pad = (value: number) => String(value).padStart(2, "0");
+	if (minutes < 60) return `${minutes}m ${pad(whole % 60)}s`;
+	return `${Math.floor(minutes / 60)}h ${pad(minutes % 60)}m`;
+}
+
+// The width the base's whole-second time took: integer seconds below 10, the shared format above.
+export function legacyDurationWidth(ms: number) {
+	const seconds = Math.floor(Math.max(0, ms) / 1000);
+	return seconds < 10
+		? `${seconds}s`.length
+		: visibleWidth(formatDuration(seconds * 1000));
 }
 
 export function affordance(theme: Theme) {

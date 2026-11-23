@@ -5230,7 +5230,7 @@ test("a background child shows in the subagent box pinned above the input and ab
 		assert.match(lines[0], /▾ Subagents 1 running +alt\+a view/);
 		assert.match(
 			lines[1],
-			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+s$/,
+			/[⠋⠙⠹⠸⠼⠴⠦⠧] worker [0-9a-f]{4} Fix the failing test +model \(medium\) \d+(?:\.\d)?s$/,
 		);
 		const task = lines.findIndex((line) =>
 			line.includes("□ Review the doctor"),
@@ -5457,16 +5457,16 @@ test("alt+a and /workflow:subagents open a full-screen overlay of every child; j
 		assert.match(lines[0], /^ ┌─ Fleet 2 · 1 active ─+ \[×\] ─┐$/);
 		assert.match(
 			lines[1],
-			/^ │ {3}Working ─+ │ ◐ worker [0-9a-f]{4} +running · \d+s {2}│$/,
+			/^ │ {3}Working ─+ │ ◐ worker [0-9a-f]{4} +running · \d+(?:\.\d)?s {2}│$/,
 		);
 		assert.match(
 			lines[2],
-			/^ │ {2}▸ ◐ worker [0-9a-f]{4} +running · \d+s │ model \(medium\) · wt: repo/,
+			/^ │ {2}▸ ◐ worker [0-9a-f]{4} .*\d+(?:\.\d)?s │ model \(medium\) · wt: repo/,
 		);
 		assert.match(lines[3], /^ │ {3}History ─+ │ ctx unavailable/);
 		assert.match(
 			lines[4],
-			/^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+s │ Run the tests/,
+			/^ │ {4}✓ worker [0-9a-f]{4} Map the.* \d+(?:\.\d)?s │ Run the tests/,
 		);
 		assert.match(
 			view.lines(60).at(-2),
@@ -5639,7 +5639,10 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		let lines = view.lines(60);
 		let body = lines.join("\n");
 		assert.match(lines[0], /^ ┌─ Fleet 1 · 1 active ─+ \[×\] ─┐$/);
-		assert.match(lines[1], /^ │ {2}◐ worker [0-9a-f]{4} +running · \d+s {2}│$/);
+		assert.match(
+			lines[1],
+			/^ │ {2}◐ worker [0-9a-f]{4} +running · \d+(?:\.\d)?s {2}│$/,
+		);
 		assert.match(body, /❯ Review the doctor/);
 		assert.match(body, /I should read the doctor module first\./);
 		assert.match(body, /The doctor checks three things\./);
@@ -5687,7 +5690,7 @@ test("Enter opens a live detail that follows the tail, collapses thinking with P
 		view.press("y");
 		assert.equal(await stateOf(extension, id), "cancelled");
 		lines = view.lines(60);
-		assert.match(lines[1], /– worker [0-9a-f]{4} +cancelled · \d+s/);
+		assert.match(lines[1], /– worker [0-9a-f]{4} +cancelled · \d+(?:\.\d)?s/);
 		assert.match(lines.join("\n"), /The doctor checks three things\./);
 		assert.match(lines.join("\n"), /◆ Run npm test/);
 		assert.match(
@@ -5781,7 +5784,7 @@ test("in fullscreen a click selects a row, a double click opens it, and each foo
 		assert.equal(view.active(60), 3);
 		click(5, 3, 2);
 		let lines = view.lines(60);
-		assert.match(lines[1], /◐ worker [0-9a-f]{4} +running · \d+s/);
+		assert.match(lines[1], /◐ worker [0-9a-f]{4} +running · \d+(?:\.\d)?s/);
 		const at = lines.findIndex((line) => line.includes("Esc back"));
 		click(lines[at].indexOf("Esc back") + 1, at);
 		assert.match(view.lines(60)[1], /Working ─/);
@@ -5975,7 +5978,9 @@ test("the view lists waiting, running, queued, then finished children, and a cli
 		});
 		assert.match(
 			view.lines(60)[1],
-			new RegExp(`✓ worker ${ids[0].slice(0, 4)} +completed · \\d+s`),
+			new RegExp(
+				`✓ worker ${ids[0].slice(0, 4)} +completed · \\d+(?:\\.\\d)?s`,
+			),
 		);
 	});
 });
@@ -6314,15 +6319,23 @@ test("children launched by one codemode call are grouped under it with the numbe
 		const rows = lines.map((line) => line.split("│")[1] ?? "");
 		const row = (id) =>
 			rows.findIndex((line) => line.includes(`worker ${id.slice(0, 4)}`));
-		assert.ok(row(direct) < at);
-		assert.match(rows[at + 2], new RegExp(`◐ worker ${second.slice(0, 4)}`));
+		assert.ok(row(direct) >= 0 && row(direct) < at, lines.join("\n"));
+		assert.match(
+			rows[at + 2],
+			new RegExp(`◐ worker ${second.slice(0, 4)} +running`),
+		);
+		assert.match(rows[at + 3], / 1\.0k tok $/);
 		const history = rows.findIndex((line) => /History ─/.test(line));
 		const again = lines.findIndex(
 			(line, i) => i > history && / script ipt7 ─/.test(line),
 		);
 		assert.ok(at < history && history < again, lines.join("\n"));
 		assert.match(lines[again + 1], /2 launched · 1 done +3\.0k tok/);
-		assert.match(rows[again + 2], /✓ worker .*completed/);
+		assert.match(
+			rows[again + 2],
+			new RegExp(`✓ worker ${first.slice(0, 4)} +completed`),
+		);
+		assert.match(rows[again + 3], / 2\.0k tok $/);
 	});
 });
 

@@ -27,6 +27,7 @@ import { renderHeader } from "../extensions/chrome.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -873,6 +874,381 @@ test("one-line rows show the Run state, or only its time in the narrowest pane, 
 		/✓ worker a809 R.* completed · 1m 04s · 4\.0k tok · \$0\.01 +│$/,
 	);
 	assert.match(single[5], /✗ reviewer 27c1 Run sleep.* failed · 4m 00s +│$/);
+});
+
+function timed() {
+	const finished = (id, state) =>
+		record(id, { state, startedAt: now - 3_240, endedAt: now, text: "Done." });
+	const done = finished("5636", "completed");
+	const failed = finished("27c1", "failed");
+	return fakeSessions([done, failed], {
+		[done.id]: { entries: [] },
+		[failed.id]: { entries: [] },
+	});
+}
+
+const listCells = (lines) => lines.map((line) => line.split("│")[1] ?? "");
+
+const findListRowIndex = (cells, name) =>
+	cells.findIndex((cell) => cell.includes(name));
+
+test("a child's Fleet row reads its elapsed time in the shared format at narrow and wide widths", () => {
+	for (const width of [44, 100]) {
+		const cells = listCells(open(timed(), { rows: 40 }).lines(width));
+		const at = findListRowIndex(cells, "worker 27c1");
+		assert.ok(at > 0, cells.join("\n"));
+		assert.match(cells[at], /✗ worker 27c1 +failed · 3\.2s /, `${width}`);
+	}
+});
+
+test("a wide two-line row too tight for its Run state and time keeps role, id, and Run state on the first line and moves the full time to the second", () => {
+	for (const width of [100, 104]) {
+		const cells = listCells(open(timed(), { rows: 40 }).lines(width));
+		const at = findListRowIndex(cells, "worker 5636");
+		assert.match(cells[at], /^ {2}▸ ✓ worker 5636 +completed $/, `${width}`);
+		assert.match(cells[at + 1], /^ {6}Run sleep.* 3\.2s $/, `${width}`);
+		assert.match(
+			cells[at + 2],
+			/^ {4}✗ worker 27c1 +failed · 3\.2s $/,
+			`${width}`,
+		);
+	}
+	const roomy = open(timed(), { rows: 40 }).lines(60);
+	assert.match(
+		roomy[findListRowIndex(listCells(roomy), "worker 5636")],
+		/✓ worker 5636 +completed · 3\.2s +│$/,
+	);
+	const short = open(timed(), { rows: 10 }).lines(60);
+	assert.match(
+		short[findListRowIndex(listCells(short), "worker 5636")],
+		/✓ worker 5636 Run sleep 60 to wa… completed · 3\.2s +│$/,
+	);
+});
+
+test("a saturated two-line row at 80 columns keeps glyph, role, and id, drops the Run state word only when it does not fit, and keeps the full time", () => {
+	const cells = listCells(open(timed(), { rows: 40 }).lines(80));
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.ok(at > 0, cells.join("\n"));
+	assert.match(cells[at], /^ {2}▸ ✓ worker 5636 +$/);
+	assert.match(cells[at + 1], / 3\.2s $/);
+	assert.match(cells[at + 2], /^ {4}✗ worker 27c1 +failed $/);
+	assert.match(cells[at + 3], / 3\.2s $/);
+});
+
+test("a selected row whose Steer mark, time, and tokens exactly fill the second line shows them all", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const child = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const sessions = fakeSessions([child], {
+		[child.id]: { entries: [scripted("s1", 1, 0)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(104));
+	const at = findListRowIndex(cells, "explore 5636");
+	assert.match(cells[at], /^ {2}▸ ◐ explore 5636 +running $/);
+	assert.equal(cells[at + 1], "  1 steer pending · 3.2s · 1 tok ");
+});
+
+test("a one-line row too tight for its Steer mark and time keeps the full time and a complete Steer label, compact when the full one does not fit", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const child = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const sessions = fakeSessions([child], { [child.id]: { entries: [] } });
+	const cells = listCells(open(sessions, { rows: 10 }).lines(72));
+	const row = cells.find((cell) => cell.includes("steer pending"));
+	assert.ok(row, cells.join("\n"));
+	assert.match(row, / 1 steer pending 3\.2s $/);
+	const minute = record("5636", {
+		role: "explore",
+		startedAt: now - 65_000,
+		steering: ["focus on the parser"],
+	});
+	const minuteCells = listCells(
+		open(fakeSessions([minute], { [minute.id]: { entries: [] } }), {
+			rows: 10,
+		}).lines(72),
+	);
+	const later = minuteCells.find((cell) => cell.includes("pendi"));
+	assert.match(later, / 1 pending 1m 05s $/, minuteCells.join("\n"));
+});
+
+test("a narrow one-line row keeps its child id when a single space before the time leaves room for the whole Steer label", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const terminal = densityTerminal(t, 44);
+	const worker = record("5636", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const cells = listCells(
+		open(fakeSessions([worker], { [worker.id]: { entries: [] } }), {
+			rows: 10,
+		}).lines(44),
+	);
+	assert.ok(
+		cells.includes(" ▸ ✓ worker 5636 1 steer undelivered 3.2s "),
+		cells.join("\n"),
+	);
+	terminal.columns = 41;
+	const explore = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const exploreCells = listCells(
+		open(fakeSessions([explore], { [explore.id]: { entries: [] } }), {
+			rows: 10,
+		}).lines(41),
+	);
+	assert.ok(
+		exploreCells.some(
+			(cell) =>
+				cell.startsWith(" ▸ ◐ explore 5636 ") &&
+				cell.endsWith(" 1 steer pending 3.2s "),
+		),
+		exploreCells.join("\n"),
+	);
+});
+
+test("a one-line row with an incomplete transcript keeps a whole Steer label and time and leaves the warning to the detail when it cannot fit", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	for (const [fields, label] of [
+		[{ undelivered: ["late"] }, "1 undelivered"],
+		[{ steering: ["focus on the parser"] }, "1 pending"],
+	]) {
+		const child = record("27c1", { startedAt: now - 65_000, ...fields });
+		const capture = audited(t, [child], { parent: undefined });
+		const view = open(fakeSessions([child]), {
+			rows: 10,
+			audit: capture.audit,
+		});
+		await settle(view);
+		const cells = listCells(view.lines(72));
+		const row = cells.find((cell) => cell.includes("1m 05s"));
+		assert.ok(row?.endsWith(` ${label} 1m 05s `), cells.join("\n"));
+		assert.doesNotMatch(row, /…|partial|incomplete/);
+	}
+});
+
+test("a short one-pane Fleet keeps the whole list row and shows the incomplete-transcript warning in the detail after Enter", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	densityTerminal(t, 44);
+	const child = record("27c1", {
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(fakeSessions([child]), { rows: 10, audit: capture.audit });
+	await settle(view, 44);
+	const cells = listCells(view.lines(44));
+	const row = cells.find((cell) => cell.includes("worker 27c1"));
+	assert.ok(
+		row?.startsWith(" ▸ ◐ worker 27c1 ") &&
+			row.endsWith(" 1 steer pending · 3.2s "),
+		cells.join("\n"),
+	);
+	view.press("\r");
+	const detail = listCells((await settle(view, 44)).split("\n"));
+	assert.equal(detail.length, 10);
+	assert.match(detail[1], /^ ◐ worker 27c1 +running · 3\.2s $/);
+	assert.match(detail[2], /^ incomplete transcript \(live\)/);
+});
+
+test("a saturated second line keeps the full time, then compacts Steer labels, then drops cost, then tokens", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const pending = record("5636", {
+		role: "explore",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const undelivered = record("27c1", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const bare = record("a809", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const usage = { entries: [scripted("s1", 1000, 0.01)] };
+	const sessions = fakeSessions([pending, undelivered, bare], {
+		[pending.id]: usage,
+		[undelivered.id]: usage,
+		[bare.id]: { entries: [] },
+	});
+	const expected = {
+		80: ["1 pending · 3.2s", "1 undelivered · 3.2s", "1 undelivered · 3.2s"],
+		100: [
+			"1 pending · 3.2s · 1.0k tok",
+			"1 undelivered · 3.2s",
+			"1 steer undelivered · 3.2s",
+		],
+		104: [
+			"1 pending · 3.2s · 1.0k tok",
+			"1 undelivered · 3.2s",
+			"1 steer undelivered · 3.2s",
+		],
+	};
+	for (const [width, tails] of Object.entries(expected)) {
+		const cells = listCells(open(sessions, { rows: 40 }).lines(Number(width)));
+		["explore 5636", "worker 27c1", "worker a809"].forEach((name, i) => {
+			const second = cells[findListRowIndex(cells, name) + 1];
+			assert.ok(second.endsWith(` ${tails[i]} `), `${width}: ${second}`);
+		});
+	}
+});
+
+test("a saturated second line keeps a step that fits beside its time and usage", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const going = record("5636", {
+		role: "explore",
+		step: "Go",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const done = record("27c1", {
+		step: "ok",
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+	});
+	const sessions = fakeSessions([going, done], {
+		[going.id]: { entries: [] },
+		[done.id]: { entries: [scripted("s1", 1000, 0.23)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(104));
+	const at = findListRowIndex(cells, "explore 5636");
+	assert.match(cells[at + 1], /^ {6}Go +1 steer pending · 3\.2s $/);
+	assert.match(
+		cells[findListRowIndex(cells, "worker 27c1") + 1],
+		/^ {6}ok +3\.2s · 1\.0k tok · \$0\.23 $/,
+	);
+});
+
+test("a saturated row whose time, tokens, and cost fit on its second line keeps the cost", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const done = record("5636", {
+		state: "completed",
+		startedAt: now - 65_000,
+		endedAt: now,
+		text: "Done.",
+	});
+	const sessions = fakeSessions([done], {
+		[done.id]: { entries: [scripted("s1", 1, 0.01)] },
+	});
+	const cells = listCells(open(sessions, { rows: 40 }).lines(100));
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.match(cells[at], /^ {2}▸ ✓ worker 5636 +completed $/);
+	assert.ok(cells[at + 1].endsWith(" 1m 05s · 1 tok · $0.01 "), cells[at + 1]);
+});
+
+async function unparented(t, child) {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(fakeSessions([child]), {
+		rows: 40,
+		audit: capture.audit,
+	});
+	await settle(view);
+	return view;
+}
+
+test("a saturated second line shows the incomplete-transcript warning in full when it fits and as partial log when it does not, keeping the full time", async (t) => {
+	const child = record("5636", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+	});
+	const view = await unparented(t, child);
+	for (const [width, tail] of [
+		[96, "incomplete transcript · 3.2s"],
+		[92, "partial log · 3.2s"],
+		[80, "partial log · 3.2s"],
+	]) {
+		const cells = listCells(view.lines(width));
+		const second = cells[findListRowIndex(cells, "worker 5636") + 1];
+		assert.ok(second.endsWith(` ${tail} `), `${width}: ${second}`);
+	}
+});
+
+test("a saturated second line never clips its Steer state or time for the incomplete-transcript warning and leaves the warning to the detail when it cannot fit", async (t) => {
+	const child = record("27c1", {
+		state: "completed",
+		startedAt: now - 65_000,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const view = await unparented(t, child);
+	const lines = view.lines(72);
+	const cells = listCells(lines);
+	const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+	assert.ok(second.endsWith(" 1 undelivered · 1m 05s "), second);
+	assert.doesNotMatch(second, /partial|incomplete/);
+	assert.match(lines.join("\n"), /incomplete transcript \(live\)/);
+});
+
+test("a saturated second line keeps the short incomplete-transcript warning beside a pending Steer when it fits", async (t) => {
+	const child = record("5636", {
+		role: "explore",
+		step: "Go",
+		startedAt: now - 3_240,
+		steering: ["focus on the parser"],
+	});
+	const view = await unparented(t, child);
+	const cells = listCells(view.lines(104));
+	const second = cells[findListRowIndex(cells, "explore 5636") + 1];
+	assert.ok(second.endsWith(" 1 pending · partial log · 3.2s "), second);
+});
+
+test("a saturated second line drops the separator before clipping a lone compact Steer label beside its full time", async (t) => {
+	for (const [undelivered, elapsed, tail] of [
+		[10, 65_000, "10 undelivered 1m 05s"],
+		[1, 605_000, "1 undelivered 10m 05s"],
+	]) {
+		const child = record("27c1", {
+			state: "completed",
+			startedAt: now - elapsed,
+			endedAt: now,
+			text: "Done.",
+			undelivered: Array.from({ length: undelivered }, (_, i) => `late ${i}`),
+		});
+		t.mock.timers.reset();
+		const view = await unparented(t, child);
+		const cells = listCells(view.lines(72));
+		const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+		assert.ok(second.endsWith(` ${tail} `), second);
+		assert.doesNotMatch(second, /…/);
+	}
+});
+
+test("a saturated second line shortens a lone compact undelivered label to not sent, keeping the exact count and full time, before clipping it", async (t) => {
+	const child = record("27c1", {
+		state: "completed",
+		startedAt: now - 605_000,
+		endedAt: now,
+		text: "Done.",
+		undelivered: Array.from({ length: 100 }, (_, i) => `late ${i}`),
+	});
+	const view = await unparented(t, child);
+	const cells = listCells(view.lines(72));
+	const second = cells[findListRowIndex(cells, "worker 27c1") + 1];
+	assert.ok(second.endsWith(" 100 not sent 10m 05s "), second);
+	assert.doesNotMatch(second, /…/);
 });
 
 test("hostile text in a child's step, task, or model never reaches the terminal from the Fleet rows", () => {

@@ -3,7 +3,7 @@ import type {
 	Theme,
 	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	type ChildRecord,
@@ -56,9 +56,14 @@ export function byState(a: ChildRecord, b: ChildRecord) {
 
 import { childElapsed, childModelLine, childStep } from "./child-projection.ts";
 
-function childMeta(child: ChildRecord, now: number) {
+function childMeta(child: ChildRecord, now: number, width: number) {
 	if (child.state === "queued") return "queued";
-	return `${childModelLine(child)} ${childElapsed(child, now)}`;
+	const elapsed = childElapsed(child, now);
+	const model = truncateToWidth(
+		childModelLine(child),
+		Math.max(0, width - visibleWidth(elapsed) - 2),
+	);
+	return `${model} ${elapsed}`;
 }
 
 const running = themeVar("cyan", glyphs.running[1]);
@@ -101,7 +106,7 @@ function renderChildRow(
 	width: number,
 ) {
 	const step = terminalSafeLine(childStep(child));
-	const meta = childMeta(child, now);
+	const meta = childMeta(child, now, width);
 	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
 	const line = spread(left, theme.fg("dim", meta), width);
 	return active ? theme.bg("selectedBg", line) : line;

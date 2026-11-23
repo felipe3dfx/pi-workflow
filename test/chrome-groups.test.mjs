@@ -578,16 +578,20 @@ test("hover and the transcript cursor point at an advisor card's ◇ head as the
 		false,
 	);
 	container.addChild(card);
-	const head = "   ◇ Advisor  9s · claude-opus-5 (high)";
-	const row = render().indexOf(head);
+	const advisorRow = (rows) =>
+		rows.findIndex((line) => /^ {3}[◇▸] Advisor /.test(line));
+	const row = advisorRow(render());
 	assert.ok(row > 0);
+	const head = render()[row];
+	assert.match(head, /^ {3}◇ Advisor /);
+	const pointed = head.replace("◇", "▸");
 	assert.ok(mouse(container, 80, "move", row - 1)?.handled);
-	assert.equal(render()[row], "   ▸ Advisor  9s · claude-opus-5 (high)");
+	assert.equal(render()[row], pointed);
 	const text = render().findIndex((line) => line.includes("Asking."));
 	assert.ok(mouse(container, 80, "move", text)?.handled);
 	assert.equal(render()[row], head);
 	assert.ok(transcriptCursor.move(-1));
-	assert.ok(shows(render(), "   ▸ Advisor  9s · claude-opus-5 (high)"));
+	assert.ok(shows(render(), pointed.trimEnd()));
 	assert.ok(transcriptCursor.toggle());
 	assert.equal(card.expanded, true);
 	assert.ok(transcriptCursor.toggle());
@@ -595,7 +599,7 @@ test("hover and the transcript cursor point at an advisor card's ◇ head as the
 	assert.ok(transcriptCursor.move(-1));
 	const rows = render();
 	assert.ok(shows(rows, "   ▸ Run ls"));
-	assert.ok(shows(rows, head));
+	assert.equal(rows[advisorRow(rows)], head);
 });
 
 test("moving the cursor off screen scrolls the transcript to it, and leaving returns to the end", (t) => {
@@ -1246,7 +1250,7 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 	const lines = render(43);
 	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
 	assert.deepEqual(lines.slice(head, head + 3), [
-		`◇ Advisor 9s${" ".repeat(29)}›`,
+		`◇ Advisor 9.0s${" ".repeat(27)}›`,
 		"  claude-opus-5 (high)",
 		"  one",
 	]);

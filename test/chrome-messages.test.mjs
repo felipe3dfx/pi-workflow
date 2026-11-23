@@ -321,12 +321,21 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 		[9_940, "9.9s"],
 		[9_960, "10s"],
 		[59_400, "59s"],
-		[59_600, "1m0s"],
-		[60_000, "1m0s"],
-		[119_400, "1m59s"],
-		[119_600, "2m0s"],
+		[59_600, "1m 00s"],
+		[60_000, "1m 00s"],
+		[119_400, "1m 59s"],
+		[119_600, "2m 00s"],
+		[
+			65_000,
+			"1m 05s",
+			[
+				[44, 43],
+				[100, 100],
+			],
+		],
 	];
-	for (const [ms, label] of cases) {
+	const terminal = densityTerminal(t, 100);
+	for (const [ms, label, sizes = [[100, 60]]] of cases) {
 		t.mock.timers.enable({ apis: ["Date"], now: 1_000 });
 		const component = assistantComponent(true);
 		component.updateContent(assistant([thought], { timestamp: ms }), true);
@@ -335,10 +344,14 @@ test("thought durations round once so the seconds and minutes boundaries roll ov
 			assistant([thought, answer], { timestamp: ms }),
 			true,
 		);
-		assert.equal(
-			plain(component.render(60))[1].trimEnd(),
-			`   ◆ Thought for ${label}`,
-		);
+		for (const [columns, width] of sizes) {
+			terminal.columns = columns;
+			assert.equal(
+				plain(component.render(width))[1].trimEnd(),
+				`${columns < 60 ? "" : "   "}◆ Thought for ${label}`,
+				`${columns} columns`,
+			);
+		}
 		t.mock.timers.reset();
 	}
 });
