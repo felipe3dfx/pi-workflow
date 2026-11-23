@@ -1176,6 +1176,45 @@ test("below 60 terminal columns thinking, its rail and notices put their glyph i
 	for (const line of notice) assert.ok(visibleWidth(line.trimEnd()) <= 42);
 });
 
+test("below 60 terminal columns a collapsed thought hides its inline expand hint and a tap on its row still expands it, and 60 columns or more shows the hint again", (t) => {
+	patched(t);
+	const { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } = piTui;
+	setKeybindings(
+		new KeybindingsManager({
+			...TUI_KEYBINDINGS,
+			"app.thinking.toggle": { defaultKeys: "ctrl+t" },
+		}),
+	);
+	t.after(() => setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS)));
+	const terminal = densityTerminal(t, 60);
+	const component = assistantComponent(true);
+	component.updateContent(assistant([thought]), false);
+	const wide = "   ◆ Thought  (ctrl+t to expand)";
+	assert.equal(plain(component.render(59))[1].trimEnd(), wide);
+	terminal.columns = 44;
+	assert.deepEqual(plain(component.render(43)), ["", "◆ Thought".padEnd(43)]);
+	terminal.columns = 60;
+	assert.equal(plain(component.render(59))[1].trimEnd(), wide);
+	terminal.columns = 59;
+	assert.equal(plain(component.render(58))[1].trimEnd(), "◆ Thought");
+	const tap = (x, y) =>
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x,
+			y,
+			width: 58,
+			height: 2,
+		});
+	tap(0, 0);
+	assert.equal(plain(component.render(58)).length, 2);
+	tap(0, 1);
+	assert.deepEqual(
+		plain(component.render(58)).map((line) => line.trimEnd()),
+		["", "┃ ◆ Thought", "┃", "┃ weigh the options"],
+	);
+});
+
 test("below 60 terminal columns tool and bash rows put their glyph in the lane and keep the right margin", (t) => {
 	const tool = toolRow();
 	const bash = new BashExecutionComponent("ls", { requestRender() {} });
