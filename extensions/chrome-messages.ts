@@ -484,9 +484,13 @@ function updateContent(
 		this.contentContainer.addChild(new Spacer(1));
 	}
 	let thinkingRunIndex = 0;
+	const lastText = message.content.findLastIndex(
+		(content) => content.type === "text" && content.text.trim(),
+	);
 	for (let i = 0; i < message.content.length; i++) {
 		const content = message.content[i];
 		if (content.type === "text" && content.text.trim()) {
+			const stamped = i === lastText;
 			const markdown = new Markdown(
 				content.text.trim(),
 				0,
@@ -503,7 +507,8 @@ function updateContent(
 					() => ({
 						first: lane(),
 						rest: lane(),
-						stamp: stamp(message.timestamp),
+						// Below 60 columns one stamp floats on the message's last text.
+						stamp: stamped || !narrowScreen() ? stamp(message.timestamp) : "",
 					}),
 					inset,
 					blockRight,

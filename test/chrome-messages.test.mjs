@@ -1400,10 +1400,13 @@ test("below 60 terminal columns a one-line assistant message keeps the stamp aft
 
 test("below 60 terminal columns a streaming assistant message places its stamp again on every render", (t) => {
 	patched(t);
-	densityTerminal(t, 44);
+	const terminal = densityTerminal(t, 44);
 	const component = assistantComponent(true);
-	const stream = (value) => {
-		component.updateContent(assistant([text(value)]), true);
+	const stream = (...blocks) => {
+		const content = blocks.map((block) =>
+			typeof block === "string" ? text(block) : block,
+		);
+		component.updateContent(assistant(content), true);
 		return plain(component.render(43)).slice(1);
 	};
 	assert.deepEqual(stream("Review the narrow layout today"), [
@@ -1422,6 +1425,21 @@ test("below 60 terminal columns a streaming assistant message places its stamp a
 		"  Review the narrow terminal layout before",
 		"  changing the status bar and the wrapping",
 		`  rules for long messages.${" ".repeat(8)}11:55 AM`,
+	]);
+	const parts = stream("First paragraph.", thought, "Final paragraph.");
+	const last = `  Final paragraph.${" ".repeat(16)}11:55 AM`;
+	assert.deepEqual(
+		parts.filter((line) => line.includes("11:55 AM")),
+		[last],
+	);
+	assert.equal(parts.at(-1), last);
+	assert.deepEqual(stream("Review the narrow layout please"), [
+		"  Review the narrow layout please".padEnd(42),
+		`${" ".repeat(34)}11:55 AM`,
+	]);
+	terminal.columns = 45;
+	assert.deepEqual(plain(component.render(44)).slice(1), [
+		"  Review the narrow layout please  11:55 AM",
 	]);
 });
 
