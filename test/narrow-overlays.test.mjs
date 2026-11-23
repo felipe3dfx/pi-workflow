@@ -674,6 +674,41 @@ test("in a narrow fullscreen dock, the Settings Theme submenu keeps the theme ch
 	);
 });
 
+test("in a narrow fullscreen dock crowded by running children and a Todo, the automatic Theme's Light theme submenu keeps the theme chosen with the keyboard and its hint in view", async (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	freezeClock(t);
+	const screen = piScreen(t, 44, { rows: 12, theme });
+	const previews = [];
+	const selector = piSettings(previews);
+	narrowDock(t, screen, selector, widgets(4, 1));
+	const list = selector.getSettingsList();
+	for (const character of "theme") list.handleInput(character);
+	list.handleInput("\r");
+	list.handleInput("\x1b[A");
+	list.handleInput("\r");
+	list.handleInput("\r");
+	list.handleInput("\x1b[B");
+	assert.deepEqual(previews, ["dark/dark", "dark/dark", "light"]);
+
+	const lines = await screen.frame();
+	const top = lines.findIndex((line) => /^┌─ Settings › Theme /.test(line));
+	assert.ok(top > 0, lines.join("\n"));
+	const bottom = lines.indexOf(`└${"─".repeat(42)}┘`, top);
+	assert.ok(bottom > top, lines.join("\n"));
+	assert.equal(
+		lines[bottom - 1],
+		`│ ${"  Enter select  |  Esc go back".padEnd(40)} │`,
+	);
+	const row = lines.findIndex((line) => line.startsWith("│  ○ light "));
+	assert.ok(row > top && row < bottom - 1, lines.join("\n"));
+	const painted = screen.tui.getScreenLines()[row];
+	assert.ok(
+		painted.includes(theme.bg("selectedBg", "\0").split("\0")[0]),
+		JSON.stringify(painted),
+	);
+});
+
 const running = (count) =>
 	Array.from({ length: count }, (_, i) => childRecord(`${2000 + i}`));
 

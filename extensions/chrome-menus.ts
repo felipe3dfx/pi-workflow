@@ -306,6 +306,10 @@ function linesAfter(
 	width: number,
 ): string[] | undefined {
 	if (node === target) return [];
+	// A settings list with an open submenu renders only that submenu.
+	const open = (node as Partial<SettingsListState>).submenuComponent;
+	if (node instanceof SettingsList && open)
+		return linesAfter(open, target, width);
 	const { activeComponent, children = [] } = node as {
 		activeComponent?: unknown;
 		children?: Component[];
