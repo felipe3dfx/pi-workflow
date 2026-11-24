@@ -1081,6 +1081,48 @@ test("a 43-column Fleet second line that still overflows shows partial log and d
 	assert.doesNotMatch(second, /\$|tok|incomplete/);
 });
 
+test("a narrow Fleet second line whose metadata already fits keeps the ellipsized Todo id beside it at 46 and 52 columns", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	for (const [width, id, overrides, tokens, cost, suffix] of [
+		[
+			46,
+			"3a51",
+			{ todo: 3, steering: ["focus"] },
+			6_200,
+			0.05,
+			" #3… 1 steer pending · 6.2k tok · $0.05 ",
+		],
+		[
+			52,
+			"7c42",
+			{
+				todo: 7,
+				state: "completed",
+				startedAt: now - 3_240,
+				endedAt: now,
+				text: "Done.",
+				undelivered: ["late"],
+			},
+			100_000,
+			1.23,
+			" #7… 1 steer undelivered · 100.0k tok · $1.23 ",
+		],
+	]) {
+		densityTerminal(t, width);
+		const child = record(id, overrides);
+		const cells = listCells(
+			open(
+				fakeSessions([child], {
+					[child.id]: { entries: [scripted("s1", tokens, cost)] },
+				}),
+				{ rows: 31, tasks: { [overrides.todo]: "Wire the parser" } },
+			).lines(width),
+		);
+		const at = findListRowIndex(cells, `worker ${id}`);
+		assert.ok(cells[at + 1].endsWith(suffix), cells.join("\n"));
+	}
+});
+
 test("a one-line row with an incomplete transcript keeps a whole Steer label and time and leaves the warning to the detail when it cannot fit", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
 	for (const [fields, label] of [

@@ -1637,7 +1637,10 @@ function createChildrenView(
 					? [first(), second(runTime(child, now))]
 					: [
 							pair(head, theme.fg("dim", state), width),
-							narrow ? second("") : pair(`    ${detail}`, right(spend), width),
+							// Only a narrow suffix that overflows is fitted; one that fits keeps the ellipsized detail beside it.
+							narrow && visibleWidth(right(spend)) > width
+								? second("")
+								: pair(`    ${detail}`, right(spend), width),
 						]
 				: [
 						spread(
