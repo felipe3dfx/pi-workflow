@@ -21,6 +21,7 @@ import {
 	type Task,
 	type TaskState,
 } from "./todo-list.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 const TodoTaskState = Type.Union(
 	TASK_STATES.map((state) => Type.Literal(state)),
@@ -107,14 +108,24 @@ export function registerSessionTodo(
 ) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	// The browsing position: `page` at `capacity` tasks per page under `rows`
-	// terminal rows. A width-only reflow displays the page holding this task
-	// offset without rewriting it, so crossing back restores the page (NS-02);
-	// `shown` is the page last displayed, which navigation moves from.
-	type Position = { page: number; capacity: number; rows: number };
-	let anchor: Position = { page: 1, capacity: 0, rows: 0 };
-	let shown = anchor;
-	let pageCount: number | null = null;
+	// The browsing position: `offset` is the first task of the page the user
+	// chose, projected onto the page grid whenever density changes, so crossing
+	// 60 columns and back restores that page (NS-02). `paging` is the current
+	// page at the last paginated density and capacity; navigation moves it and
+	// the offset together, before any repaint.
+	type Paging = {
+		page: number;
+		narrow: boolean;
+		capacity: number;
+		pageCount: number;
+	};
+	let offset = 0;
+	let paging: Paging | null = null;
+	function turn(page: number) {
+		if (paging === null || page === paging.page) return;
+		paging = { ...paging, page };
+		offset = (page - 1) * paging.capacity;
+	}
 	let targets: TodoHitTarget[] = [];
 	function act(action: TodoHitAction) {
 		targets = [];
@@ -127,14 +138,14 @@ export function registerSessionTodo(
 				break;
 			case "filter":
 				boxState.showDone = !boxState.showDone;
-				anchor = { ...anchor, page: 1 };
+				offset = 0;
+				if (paging !== null) paging = { ...paging, page: 1 };
 				break;
 			case "previous":
-				anchor = { ...shown, page: Math.max(1, shown.page - 1) };
+				if (paging !== null) turn(Math.max(1, paging.page - 1));
 				break;
 			case "next":
-				if (pageCount !== null)
-					anchor = { ...shown, page: Math.min(pageCount, shown.page + 1) };
+				if (paging !== null) turn(Math.min(paging.pageCount, paging.page + 1));
 				break;
 		}
 		requestRender();
@@ -143,15 +154,15 @@ export function registerSessionTodo(
 		occupyAboveInput(
 			"todo",
 			(width, theme, rows) => {
+				const narrow = narrowScreen();
 				const capacity = todoCapacity(rows);
-				const reflow =
-					rows === anchor.rows &&
-					capacity > 0 &&
-					anchor.capacity > 0 &&
-					capacity !== anchor.capacity;
-				const page = reflow
-					? Math.floor(((anchor.page - 1) * anchor.capacity) / capacity) + 1
-					: anchor.page;
+				// A density change projects the saved offset; at the same density the
+				// current page stands, and the renderer clamps it to the live count.
+				const projected =
+					capacity > 0 && (paging === null || paging.narrow !== narrow);
+				const page = projected
+					? Math.floor(offset / capacity) + 1
+					: (paging?.page ?? 1);
 				const layout = renderTodoBox(
 					theme,
 					todoList.list(),
@@ -161,12 +172,21 @@ export function registerSessionTodo(
 					rows,
 					page,
 				);
-				if (layout.pageCount === null) shown = anchor;
-				else {
-					pageCount = layout.pageCount;
-					shown = { page: layout.page, capacity: layout.capacity, rows };
-					// Data and height changes persist their clamp; a reflow keeps its anchor.
-					if (!reflow || layout.page !== page) anchor = shown;
+				// Deferred layouts (collapsed, compact, empty) rewrite nothing.
+				if (layout.pageCount !== null) {
+					// A clamp or a same-density capacity change moves the saved
+					// offset to the page shown; otherwise the offset stands.
+					if (
+						layout.page !== page ||
+						(!projected && paging?.capacity !== capacity)
+					)
+						offset = (layout.page - 1) * capacity;
+					paging = {
+						page: layout.page,
+						narrow,
+						capacity,
+						pageCount: layout.pageCount,
+					};
 				}
 				targets = layout.targets;
 				return layout.lines;
