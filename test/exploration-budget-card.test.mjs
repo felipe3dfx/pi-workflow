@@ -14,6 +14,10 @@ import {
 	registerExplorationBudgetCard,
 } from "../extensions/exploration-budget-card.ts";
 import { explorationNotice } from "../extensions/exploration-budget.ts";
+import { theme } from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { trueColor } from "./support/true-color.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 const piTui = await import(
 	createRequire(import.meta.resolve("@earendil-works/pi-coding-agent")).resolve(
@@ -107,6 +111,96 @@ test("a click on the row toggles the notice text, and a click on the text does n
 	assert.ok(component.handleMouse(at(1))?.handled);
 	component.invalidate();
 	assert.equal(plain(component).length, 2);
+});
+
+const notice = (t, counts = facts) =>
+	card(t, { content: explorationNotice(counts, "inline"), details: counts });
+
+const at = (y, width) => ({
+	type: "click",
+	button: "left",
+	x: 3,
+	y,
+	width,
+	height: 4,
+	screenX: 3,
+	screenY: y,
+});
+
+test("below 60 terminal columns the exploration head keeps its counts and ›, and the → action takes its own warning row with no status row", (t) => {
+	densityTerminal(t, 44);
+	const component = notice(t);
+	assert.deepEqual(plain(component, 43), [
+		"",
+		"◆ Exploration budget 4 lookups · 47 KB   ›",
+		"  → continue discovery in an explore child",
+	]);
+	const raw = component.render(43);
+	assert.ok(
+		raw[2].includes(
+			theme().fg("warning", "→ continue discovery in an explore child"),
+		),
+	);
+	assert.equal(component.handleMouse(at(2, 43)), undefined);
+	assert.ok(component.handleMouse(at(1, 43))?.handled);
+	const open = plain(component, 43);
+	assert.equal(open[1], "◆ Exploration budget 4 lookups · 47 KB   ›");
+	assert.equal(open[2], "  → continue discovery in an explore child");
+	assert.match(open[3], /^ {2}Exploration budget: 4 tracked lookups/);
+});
+
+test("below 60 terminal columns the exploration head keeps both counts with their units at 44 columns and cuts its title with … first", (t) => {
+	densityTerminal(t, 44);
+	assert.equal(
+		plain(notice(t, { lookups: 4, textBytes: 101_000 }), 43)[1],
+		"◆ Exploration budget 4 lookups · 101 KB  ›",
+	);
+	assert.equal(
+		plain(notice(t, { lookups: 1234, textBytes: 12_300_000 }), 43)[1],
+		"◆ Exploration bu… 1234 lookups · 12.3 MB ›",
+	);
+});
+
+test("below 60 terminal columns a narrower exploration notice cuts its title with … before › and wraps the action whole", (t) => {
+	densityTerminal(t, 44);
+	assert.deepEqual(plain(notice(t), 30), [
+		"",
+		"◆ Explor… 4 lookups · 47 KB ›",
+		"  → continue discovery in an",
+		"  explore child",
+	]);
+	const head = (columns, counts) => {
+		densityTerminal(t, columns);
+		return plain(notice(t, counts), columns - 1)[1];
+	};
+	assert.equal(
+		head(26, { lookups: 4, textBytes: 101_000 }),
+		"◆ … 4 lookups · 101 KB ›",
+	);
+	assert.equal(head(25, facts), "◆ … 4 lookups · 47 KB ›");
+	assert.equal(head(21, facts), "4 lookups · 47 KB ›");
+});
+
+test("at 60 and 100 terminal columns the exploration notice renders the base's bytes, collapsed and expanded, also after crossing 60 columns both ways", (t) => {
+	trueColor(t);
+	const terminal = densityTerminal(t, 60);
+	const opened = notice(t);
+	opened.setExpanded(true);
+	const scenarios = { collapsed: notice(t), expanded: opened };
+	for (const pass of ["before", "after"]) {
+		for (const [name, component] of Object.entries(scenarios))
+			eachWideWidth(terminal, (width, columns) =>
+				assert.deepEqual(
+					component.render(width),
+					wideCards.budget[name][width],
+					`${pass} ${name} ${width} in ${columns}`,
+				),
+			);
+		terminal.columns = 59;
+		const narrow = plain(scenarios.expanded, 58);
+		assert.equal(narrow[2], "  → continue discovery in an explore child");
+		assert.match(narrow[3], /^ {2}Exploration budget: 4 tracked lookups/);
+	}
 });
 
 test("a notice without numeric facts falls back to Pi's default rendering", (t) => {

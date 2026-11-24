@@ -13,6 +13,7 @@ import {
 	resetPlaces,
 } from "../extensions/shell.ts";
 import { registerSessionTodo } from "../extensions/todo-extension.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -952,4 +953,242 @@ test("filtered empty stays reversible, and stale hits cannot survive reseating o
 	lines = widget.render(80);
 	await fireEvent(handlers, "session_start", ctx);
 	assert.equal(widget.handleMouse({ ...event, x: 79, y: 1 }), undefined);
+});
+
+test("below 60 terminal columns a tap on the ▾ Todo heading collapses it like Alt+Shift+T, and its page and collapse survive crossing 60 columns both ways", async (t) => {
+	t.after(resetPlaces);
+	const terminal = densityTerminal(t, 44);
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = {
+		...fakeCtx().ctx,
+		ui: {
+			setWidget: (_key, make) => {
+				factory = make;
+			},
+		},
+	};
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 31 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	await execute(
+		tools,
+		"write",
+		{
+			tasks: Array.from({ length: 12 }, (_, i) => ({ text: `Task ${i + 1}` })),
+		},
+		ctx,
+	);
+	let lines = widget.render(44);
+	const tap = (x, y) => ({
+		type: "click",
+		button: "left",
+		x,
+		y,
+		screenX: x,
+		screenY: y,
+		width: 44,
+		height: lines.length,
+		shift: false,
+		alt: false,
+		ctrl: false,
+	});
+	assert.equal(lines[0], `▾ Todo 0/12${" ".repeat(22)}Alt+Shift+T`);
+	assert.equal(lines[9], "12/12 All 1/2 ‹ › Without done");
+	assert.equal(widget.handleMouse(tap(16, 9))?.handled, true);
+	lines = widget.render(44);
+	assert.equal(lines[1], "○ Task 9");
+	assert.equal(widget.handleMouse(tap(0, 1)), undefined);
+	assert.equal(widget.handleMouse(tap(0, 0))?.handled, true);
+	lines = widget.render(44);
+	assert.deepEqual(lines, ["session tasks collapsed"]);
+
+	terminal.columns = 60;
+	assert.deepEqual(widget.render(60), ["session tasks collapsed"]);
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	lines = widget.render(60);
+	assert.equal(lines[1], `┌${" ".repeat(58)}×`);
+	assert.equal(lines[2], `│ □ Task 6${" ".repeat(49)}│`);
+
+	terminal.columns = 59;
+	lines = widget.render(59);
+	assert.equal(lines[0], `▾ Todo 0/12${" ".repeat(37)}Alt+Shift+T`);
+	assert.equal(lines[1], "○ Task 9");
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	assert.deepEqual(widget.render(59), ["session tasks collapsed"]);
+	await shortcuts.get("alt+shift+t").handler(ctx);
+	assert.equal(widget.render(59)[1], "○ Task 9");
+	assert.equal(
+		(await execute(tools, "list", {}, ctx)).details.tasks.length,
+		12,
+	);
+
+	// A width-only crossing keeps the browsing position on the final wide page.
+	terminal.columns = 60;
+	widget.render(60);
+	await shortcuts.get("alt+shift+n").handler(ctx);
+	const finalPage = () => {
+		const wide = widget.render(60);
+		return [wide[2], wide.find((line) => line.includes("/3 "))];
+	};
+	const before = finalPage();
+	assert.equal(before[0], `│ □ Task 11${" ".repeat(48)}│`);
+	assert.match(before[1], / 3\/3 /);
+	for (const columns of [43, 59]) {
+		terminal.columns = columns;
+		assert.equal(widget.render(columns)[1], "○ Task 9");
+		terminal.columns = 60;
+		assert.deepEqual(finalPage(), before);
+	}
+});
+
+async function pagedTodo(t, columns, count) {
+	t.after(resetPlaces);
+	const terminal = densityTerminal(t, columns);
+	const { pi, tools, handlers, shortcuts } = fakePi();
+	const shell = registerShell(pi);
+	registerSessionTodo(pi, shell.requestAboveInputRender, () => new Map());
+	let factory;
+	const ctx = {
+		...fakeCtx().ctx,
+		ui: {
+			setWidget: (_key, make) => {
+				factory = make;
+			},
+		},
+	};
+	await fireEvent(handlers, "session_start", ctx);
+	const tui = { terminal: { rows: 31 }, requestRender() {} };
+	const widget = factory(tui, fakeTheme());
+	const tasks = Array.from({ length: count }, (_, i) => ({
+		text: `Task ${i + 1}`,
+	}));
+	await execute(tools, "write", { tasks }, ctx);
+	const view = () => {
+		const lines = widget.render(terminal.columns);
+		return {
+			lines,
+			first: lines.map((line) => line.match(/Task \d+/)?.[0]).find(Boolean),
+			page: lines
+				.map((line) => line.match(/(?:All|Without done) (\d+\/\d+)/)?.[1])
+				.find(Boolean),
+		};
+	};
+	const next = () => shortcuts.get("alt+shift+n").handler(ctx);
+	const withoutDone = () => shortcuts.get("alt+shift+h").handler(ctx);
+	const done = (id) => execute(tools, "update", { id, state: "done" }, ctx);
+	return { terminal, tui, widget, view, next, withoutDone, done };
+}
+
+test("below 60 columns a height change that keeps the Todo capacity keeps the projected page", async (t) => {
+	const { terminal, tui, view, next } = await pagedTodo(t, 60, 20);
+	view();
+	await next();
+	view();
+	await next();
+	assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	terminal.columns = 43;
+	assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+	tui.terminal.rows = 32;
+	assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+	tui.terminal.rows = 31;
+	assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+	terminal.columns = 60;
+	assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+});
+
+test("below 60 columns a height round trip that changes the Todo capacity keeps the wide page to return to", async (t) => {
+	const { terminal, tui, view, next } = await pagedTodo(t, 60, 20);
+	view();
+	await next();
+	view();
+	await next();
+	assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	for (const columns of [43, 59]) {
+		terminal.columns = columns;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+		tui.terminal.rows = 29;
+		assert.deepEqual([view().first, view().page], ["Task 8", "2/3"]);
+		tui.terminal.rows = 31;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+		terminal.columns = 60;
+		assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	}
+});
+
+test("below 60 columns a saved offset whose task leaves a partial page returns to that page's first task", async (t) => {
+	for (const columns of [43, 59]) {
+		const { terminal, tui, view, next, withoutDone, done } = await pagedTodo(
+			t,
+			columns,
+			15,
+		);
+		tui.terminal.rows = 29;
+		await withoutDone();
+		view();
+		await next();
+		view();
+		await next();
+		assert.deepEqual([view().first, view().page], ["Task 15", "3/3"]);
+		tui.terminal.rows = 31;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		await done(15);
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		terminal.columns = 60;
+		assert.deepEqual([view().first, view().page], ["Task 6", "2/3"]);
+	}
+});
+
+test("a Next that cannot leave the last narrow page keeps the wide page to return to", async (t) => {
+	const { terminal, widget, view, next } = await pagedTodo(t, 60, 12);
+	view();
+	await next();
+	view();
+	await next();
+	assert.deepEqual([view().first, view().page], ["Task 11", "3/3"]);
+	for (const columns of [43, 59]) {
+		terminal.columns = columns;
+		const { lines, first, page } = view();
+		assert.deepEqual([first, page], ["Task 9", "2/2"]);
+		const row = lines.findIndex((line) => line.includes("‹ ›"));
+		const x = lines[row].indexOf("›");
+		assert.equal(
+			widget.handleMouse({
+				type: "click",
+				button: "left",
+				x,
+				y: row,
+				screenX: x,
+				screenY: row,
+				width: columns,
+				height: lines.length,
+				shift: false,
+				alt: false,
+				ctrl: false,
+			})?.handled,
+			true,
+		);
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		await next();
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		terminal.columns = 60;
+		assert.deepEqual([view().first, view().page], ["Task 11", "3/3"]);
+	}
+});
+
+test("two Next shortcuts before one render advance two Todo pages at narrow and wide sizes", async (t) => {
+	for (const [columns, expected] of [
+		[43, ["Task 17", "3/4"]],
+		[59, ["Task 17", "3/4"]],
+		[60, ["Task 11", "3/5"]],
+		[100, ["Task 11", "3/5"]],
+	]) {
+		const { view, next } = await pagedTodo(t, columns, 25);
+		assert.equal(view().page, columns < 60 ? "1/4" : "1/5");
+		await next();
+		await next();
+		assert.deepEqual([view().first, view().page], expected, `${columns}`);
+	}
 });

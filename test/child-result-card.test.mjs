@@ -15,6 +15,9 @@ import {
 } from "../extensions/child-result-card.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { trueColor } from "./support/true-color.mjs";
+import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -79,6 +82,162 @@ const plain = (component, width = 90) =>
 	component
 		.render(width)
 		.map((line) => stripVTControlCharacters(line).trimEnd());
+
+test("a collapsed result reads its elapsed time in the shared duration format on narrow and wide terminals", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	for (const [columns, width] of [
+		[44, 43],
+		[100, 100],
+	]) {
+		terminal.columns = columns;
+		for (const [elapsedMs, label] of [
+			[3_240, "3.2s"],
+			[12_400, "12s"],
+			[65_000, "1m 05s"],
+			[3_900_000, "1h 05m"],
+		]) {
+			const [, row] = plain(
+				card({
+					customType: "pi-workflow-child-result",
+					details: { ...details, elapsedMs },
+				}),
+				width,
+			);
+			if (columns < 60)
+				assert.equal(
+					row,
+					`${`◆ Subagent worker 5636 completed  ${label}`.padEnd(41)}›`,
+				);
+			else assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
+		}
+	}
+});
+
+test("below 60 terminal columns an expanded result keeps its whole time beside its model with a single space before them", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	component.setExpanded(true);
+	assert.equal(
+		plain(component, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-mini · 3.2s",
+	);
+	const longer = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			model: "openai/gpt-5.4-mini-preview",
+			thinking: undefined,
+			elapsedMs: 3_240,
+		},
+	});
+	longer.setExpanded(true);
+	assert.equal(
+		plain(longer, 43)[1],
+		"◆ Subagent worker 5636 gpt-5.4-min… · 3.2s",
+	);
+});
+
+test("a result header too tight for its metadata keeps the whole time and the pinned › before its gap and its model", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 39);
+	const partial = {
+		...details,
+		verdict: "partial",
+		result: { verdict: "partial", reason: "Database access is missing" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 3_240,
+	};
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	assert.equal(
+		plain(result(partial), 38)[1],
+		"◆ Subagent worker 5636 partial 3.2s ›",
+	);
+	terminal.columns = 60;
+	const expanded = result(partial);
+	expanded.setExpanded(true);
+	assert.equal(
+		plain(expanded, 59)[1],
+		"   ◆ Subagent worker 5636 partial claude-opus-4-6 · 3.2s",
+	);
+	terminal.columns = 44;
+	const watchdog = {
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subagent worker 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(plain(open, 43)[1], "◆ Subagent worker 5636 timed out 30m 00s");
+});
+
+test("a wide result header keeps a time that grew across a minute rollover with a single space before its model", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 60);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const rollover = result({
+		verdict: "pass",
+		result: { verdict: "pass" },
+		model: "anthropic/claude-opus-4-6",
+		thinking: undefined,
+		elapsedMs: 599_500,
+	});
+	rollover.setExpanded(true);
+	assert.equal(
+		plain(rollover, 59)[1],
+		"   ◆ Subagent worker 5636 pass claude-opus-4-6 · 10m 00s",
+	);
+});
+
+test("a collapsed Explorer watchdog result shortens, then omits, the Subagent label before its whole time and the pinned ›", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const watchdog = {
+		role: "explore",
+		state: "timed out",
+		elapsedMs: 1_800_000,
+		text: "Tool watchdog fired after 30 minutes.",
+	};
+	assert.equal(
+		plain(result(watchdog), 43)[1],
+		"◆ Subage… explore 5636 timed out 30m 00s ›",
+	);
+	const open = result(watchdog);
+	open.setExpanded(true);
+	assert.equal(plain(open, 43)[1], "◆ Subagent explore 5636 timed out 30m 00s");
+	terminal.columns = 38;
+	assert.equal(
+		plain(result(watchdog), 37)[1],
+		"◆ explore 5636 timed out 30m 00s   ›",
+	);
+});
 
 test("a collapsed result is one row with the role, id, Verdict, elapsed time, and Pi's expand key", (t) => {
 	const { card } = cards(t);
@@ -590,4 +749,314 @@ test("with the child-session claim unseated every child card falls back to its h
 		"Which one?",
 	]);
 	assert.ok(held.every((lines) => lines.some((line) => line.includes("◆"))));
+});
+
+test("below 60 terminal columns a result card puts its glyph in the lane, its reason at the body column, and a click on its head toggles it", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: {
+			...details,
+			verdict: "blocked",
+			result: { verdict: "blocked", reason: "Database access is missing" },
+		},
+	});
+	assert.deepEqual(plain(component, 43), [
+		"",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
+		"  Database access is missing",
+	]);
+	for (const line of component.render(43)) assert.ok(visibleWidth(line) <= 42);
+	assert.ok(
+		component.handleMouse({
+			type: "click",
+			button: "left",
+			x: 0,
+			y: 1,
+			width: 43,
+			height: 3,
+			screenX: 0,
+			screenY: 1,
+		})?.handled,
+	);
+	assert.ok(plain(component, 43).includes("  alt+a  open in subagents view"));
+});
+
+test("below 60 terminal columns an ended card paints its glyph and state word from the shared scale, cancelled muted instead of dim, and 60 columns or more keeps dim", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const head = (state) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, state, text: "" },
+		}).render(43)[1];
+	const painted = (color) => {
+		for (const [state, tone] of [
+			["failed", "error"],
+			["timed out", "error"],
+			["cancelled", color],
+		]) {
+			const row = head(state);
+			assert.ok(row.includes(theme().fg(tone, "◆")), `${state} ${row}`);
+			assert.ok(row.includes(theme().fg(tone, state)), `${state} ${row}`);
+		}
+	};
+	painted("muted");
+	assert.equal(
+		stripVTControlCharacters(head("cancelled")).trimEnd(),
+		`◆ Subagent worker 5636 cancelled  1m 02s${" ".repeat(1)}›`,
+	);
+	terminal.columns = 60;
+	painted("dim");
+	terminal.columns = 59;
+	painted("muted");
+	terminal.columns = 100;
+	painted("dim");
+});
+
+test("below 60 terminal columns a completed card without a Verdict reads completed in the success tone, and a Verdict stays its only state word", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const bare = result({});
+	assert.deepEqual(plain(bare, 43), [
+		"",
+		"◆ Subagent worker 5636 completed  1m 02s ›",
+	]);
+	assert.ok(bare.render(43)[1].includes(theme().fg("success", "completed")));
+	const passed = result({ verdict: "pass", result: { verdict: "pass" } });
+	assert.deepEqual(plain(passed, 43), [
+		"",
+		`◆ Subagent worker 5636 pass  1m 02s${" ".repeat(6)}›`,
+	]);
+	assert.ok(passed.render(43)[1].includes(theme().fg("success", "pass")));
+});
+
+test("below 60 terminal columns a collapsed card's reason takes up to 2 lines, the second cut with …, a tap on it opens the card, and 60 columns or more keeps one line", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const reason = (text) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: {
+				...details,
+				verdict: "blocked",
+				result: { verdict: "blocked", reason: text },
+			},
+		});
+	const long = reason(
+		"Database access is missing because the staging credentials expired yesterday and nobody renewed them",
+	);
+	const narrow = [
+		"",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
+		"  Database access is missing because the",
+		"  staging credentials expired yesterday a…",
+	];
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.deepEqual(
+		plain(reason("Database access is missing because the staging role"), 43),
+		[
+			"",
+			"◆ Subagent worker 5636 blocked  1m 02s   ›",
+			"  Database access is missing because the",
+			"  staging role",
+		],
+	);
+	terminal.columns = 60;
+	const wide = [
+		"",
+		"   ◆ Subagent worker 5636 blocked  1m 02s",
+		"     Database access is missing because the staging c...",
+	];
+	assert.deepEqual(plain(long, 59), wide);
+	terminal.columns = 59;
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.ok(
+		long.handleMouse({
+			type: "click",
+			button: "left",
+			x: 2,
+			y: 3,
+			width: 43,
+			height: 4,
+		})?.handled,
+	);
+	assert.ok(plain(long, 43).includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.ok(plain(long, 59).at(-1).includes("alt+a"));
+});
+
+const blocked = {
+	...details,
+	verdict: "blocked",
+	result: { verdict: "blocked", reason: "Database access is missing" },
+};
+const question = {
+	...details,
+	state: "waiting",
+	question: 2,
+	text: "Which database should I use?",
+};
+
+test("below 60 terminal columns a collapsed result or question card keeps a dim 1-column › at the end of its head", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(plain(result, 43), [
+		"",
+		"◆ Subagent worker 5636 completed  1m 02s ›",
+	]);
+	assert.ok(result.render(43)[1].endsWith(theme().fg("dim", "›")));
+	assert.deepEqual(
+		plain(
+			card({ customType: "pi-workflow-child-question", details: question }),
+			43,
+		),
+		[
+			"",
+			"◆ Subagent worker 5636 asks · question 2 ›",
+			"  Which database should I use?",
+		],
+	);
+});
+
+test("below 60 terminal columns a result head too long for its row is cut with … and keeps ›", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	assert.deepEqual(plain(component, 30), [
+		"",
+		"◆ Subagent worker 5636 blo… ›",
+		"  Database access is missing",
+	]);
+	for (const width of [1, 2, 3, 5])
+		for (const line of component.render(width))
+			assert.ok(visibleWidth(line) <= width - 1, `${width}: ${line}`);
+	for (const width of [2, 3, 5]) {
+		const head = plain(component, width)[1];
+		assert.equal(head.at(-1), "›", `${width}: ${head}`);
+		assert.equal(visibleWidth(head), width - 1, `${width}: ${head}`);
+	}
+});
+
+test("below 60 terminal columns an open result card too narrow for its task and navigation instructions wraps them whole", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	component.setExpanded(true);
+	const rows = plain(component, 20).slice(2);
+	for (const row of rows) assert.match(row, /^( {2}\S|$)/, rows.join("\n"));
+	const text = rows.join(" ").replace(/\s+/g, " ");
+	assert.ok(text.includes("Task Run sleep 60 to wait 60 seconds"), text);
+	assert.ok(text.includes("alt+a open in subagents view"), text);
+});
+
+test("below 60 terminal columns the Parent answer card stays open with its answer and carries no ›", (t) => {
+	cards(t);
+	densityTerminal(t, 44);
+	const parent = answerCard(
+		{ id, question: 1, answer: "Use PostgreSQL." },
+		theme(),
+	);
+	assert.deepEqual(plain(parent, 43), [
+		"◆ Parent → 5636 · answer 1",
+		"  Use PostgreSQL.",
+	]);
+	assert.equal(parent.handleMouse, undefined);
+});
+
+test("below 60 terminal columns an open result card cuts its long head with … instead of ...", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(plain(component, 43).slice(0, 3), [
+		"",
+		"◆ Subagent worker 5636 blocked g… · 1m 02s",
+		"  Task Run sleep 60 to wait 60 seconds",
+	]);
+});
+
+test("at 60 and 100 terminal columns result, question and answer cards render the base's bytes", (t) => {
+	trueColor(t);
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const result =
+		(message, expanded = false) =>
+		() => {
+			const component = card(message);
+			component.setExpanded(expanded);
+			return component;
+		};
+	const scenarios = {
+		collapsed: result({ customType: "pi-workflow-child-result", details }),
+		blocked: result({
+			customType: "pi-workflow-child-result",
+			details: blocked,
+		}),
+		expanded: result(
+			{ customType: "pi-workflow-child-result", details: blocked },
+			true,
+		),
+		question: result({
+			customType: "pi-workflow-child-question",
+			details: question,
+		}),
+		answer: () =>
+			answerCard({ id, question: 2, answer: "Use Postgres." }, theme()),
+	};
+	for (const [name, make] of Object.entries(scenarios))
+		eachWideWidth(terminal, (width, columns) =>
+			assert.deepEqual(
+				make().render(width),
+				wideCards.result[name][width],
+				`${name} ${width} in ${columns}`,
+			),
+		);
+});
+
+test("one result card crossing 60 terminal columns in both directions gains › narrow and renders the base's bytes wide again", (t) => {
+	trueColor(t);
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({ customType: "pi-workflow-child-result", details });
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
+	terminal.columns = 59;
+	assert.deepEqual(
+		plain(component, 58)[1],
+		`◆ Subagent worker 5636 completed  1m 02s${" ".repeat(16)}›`,
+	);
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);
+});
+
+test("one open result card crossing 60 terminal columns in both directions keeps its expanded body on each side", (t) => {
+	trueColor(t);
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 60);
+	const component = card({
+		customType: "pi-workflow-child-result",
+		details: blocked,
+	});
+	component.setExpanded(true);
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
+	terminal.columns = 59;
+	const narrow = plain(component, 58);
+	assert.ok(narrow.includes("  Task Run sleep 60 to wait 60 seconds"));
+	assert.ok(narrow.includes("  Done; I ran sleep 60 and waited 60 seconds."));
+	assert.ok(narrow.includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.deepEqual(component.render(59), wideCards.result.expanded[59]);
 });

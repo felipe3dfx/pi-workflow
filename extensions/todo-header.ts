@@ -2,7 +2,8 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { terminalSafeLine } from "./terminal-safe-text.ts";
-import type { Task, TaskState } from "./todo-list.ts";
+import type { Task } from "./todo-list.ts";
+import { narrowScreen, pinRight, taskStateMark } from "./visual-language.ts";
 
 export interface TodoBoxState {
 	collapsed: boolean;
@@ -21,16 +22,6 @@ const CORNER_BOTTOM = "└";
 const CORNER_BOTTOM_RIGHT = "┘";
 const SIDE = "│";
 
-const STATE_MARKS: Record<
-	TaskState,
-	{ color: Parameters<TodoTheme["fg"]>[0]; glyph: string }
-> = {
-	pending: { color: "text", glyph: "□" },
-	"in progress": { color: "accent", glyph: "◐" },
-	done: { color: "success", glyph: "✓" },
-	blocked: { color: "warning", glyph: "!" },
-};
-
 export type TodoHitAction =
 	| "collapse"
 	| "expand"
@@ -48,8 +39,18 @@ export type TodoLayout = {
 	capacity: number;
 	page: number;
 	pageCount: number | null;
+	/** Tasks rendered on the page shown. */
+	shown: number;
 	targets: TodoHitTarget[];
 };
+
+/** Tasks per page at `terminalRows`, under the live density terminal. */
+export function todoCapacity(terminalRows: number): number {
+	const budget = Math.max(0, Math.floor(terminalRows / 3));
+	// Narrow, the Todo has no frame or blank rows: its heading and control row
+	// are the only overhead (NS-28).
+	return Math.max(0, Math.min(8, budget - (narrowScreen() ? 2 : 5)));
+}
 
 /** Coordinates are zero-based logical cells; end is exclusive. */
 export function renderTodoBox(
@@ -63,13 +64,15 @@ export function renderTodoBox(
 ): TodoLayout {
 	const safeWidth = Math.max(0, Math.floor(width));
 	const budget = Math.max(0, Math.floor(terminalRows / 3));
-	const capacity = Math.max(0, Math.min(8, budget - 5));
+	const narrow = narrowScreen();
+	const capacity = todoCapacity(terminalRows);
 	const targets: TodoHitTarget[] = [];
 	const deferred = (lines: string[]): TodoLayout => ({
 		lines,
 		capacity,
 		page,
 		pageCount: null,
+		shown: 0,
 		targets,
 	});
 	if (tasks.length === 0 || budget === 0) return deferred([]);
@@ -91,6 +94,58 @@ export function renderTodoBox(
 	}
 	const pageCount = Math.max(1, Math.ceil(visible.length / capacity));
 	const effectivePage = Math.max(1, Math.min(pageCount, Math.floor(page)));
+	const tasksOnPage = visible.slice(
+		(effectivePage - 1) * capacity,
+		effectivePage * capacity,
+	);
+	const taskContent = (task: Task) => {
+		const text = terminalSafeLine(task.text);
+		const mark = taskStateMark(task.state).paint(theme);
+		const executor =
+			task.state === "in progress" ? executors.get(task.id) : undefined;
+		return `${mark} ${theme.fg(task.state === "done" ? "muted" : "text", text)}${
+			executor
+				? theme.fg(
+						"dim",
+						` ← ${terminalSafeLine(executor.role)} ${terminalSafeLine(executor.id.slice(0, 4))}`,
+					)
+				: ""
+		}`;
+	};
+	if (narrow) {
+		const done = tasks.filter((task) => task.state === "done").length;
+		const heading = pinRight(
+			`${theme.fg("dim", "▾")} ${theme.bold(theme.fg("muted", "Todo"))} ${theme.fg("dim", `${done}/${tasks.length}`)}`,
+			theme.fg("dim", "Alt+Shift+T"),
+			safeWidth,
+		);
+		const end = visibleWidth(heading);
+		if (end > 0) targets.push({ action: "collapse", row: 0, start: 0, end });
+		const lines = [
+			heading,
+			...tasksOnPage.map((task) =>
+				truncateToWidth(taskContent(task), safeWidth, "…"),
+			),
+		];
+		if (tasks.length >= capacity)
+			lines.push(
+				controlRow(theme, state, visible.length, tasks.length, {
+					width: safeWidth,
+					row: lines.length,
+					page: effectivePage,
+					pageCount,
+					targets,
+				}),
+			);
+		return {
+			lines,
+			capacity,
+			page: effectivePage,
+			pageCount,
+			shown: tasksOnPage.length,
+			targets,
+		};
+	}
 	const fillerWidth = Math.max(
 		0,
 		safeWidth - CORNER_TOP.length - CLOSE_HINT.length,
@@ -118,59 +173,71 @@ export function renderTodoBox(
 			),
 		) +
 		theme.fg("borderMuted", CORNER_BOTTOM_RIGHT);
-	const rows = visible
-		.slice((effectivePage - 1) * capacity, effectivePage * capacity)
-		.map((task) => {
-			const text = terminalSafeLine(task.text);
-			const mark = STATE_MARKS[task.state];
-			const executor =
-				task.state === "in progress" ? executors.get(task.id) : undefined;
-			const content = `${theme.fg(mark.color, mark.glyph)} ${theme.fg(task.state === "done" ? "muted" : "text", text)}${
-				executor
-					? theme.fg(
-							"dim",
-							` ← ${terminalSafeLine(executor.role)} ${terminalSafeLine(executor.id.slice(0, 4))}`,
-						)
-					: ""
-			}`;
-			const inner = truncateToWidth(
-				` ${content}`,
-				Math.max(0, safeWidth - 2),
-				"…",
-				true,
-			);
-			return (
-				theme.fg("borderMuted", SIDE) + inner + theme.fg("borderMuted", SIDE)
-			);
-		});
+	const rows = tasksOnPage.map((task) => {
+		const inner = truncateToWidth(
+			` ${taskContent(task)}`,
+			Math.max(0, safeWidth - 2),
+			"…",
+			true,
+		);
+		return (
+			theme.fg("borderMuted", SIDE) + inner + theme.fg("borderMuted", SIDE)
+		);
+	});
 	const lines = ["", top, ...rows];
-	if (tasks.length >= capacity) {
-		let control = `${visible.length}/${tasks.length} ${state.showDone ? "All" : "Without done"}`;
-		control = truncateToWidth(control, safeWidth);
-		let full = false;
-		const add = (label: string, action?: TodoHitAction) => {
-			const start = visibleWidth(control) + 1;
-			const end = start + visibleWidth(label);
-			if (full || end > safeWidth) {
-				full = true;
-				return;
-			}
-			control += ` ${label}`;
-			if (action) targets.push({ action, row: lines.length, start, end });
-		};
-		add(`${effectivePage}/${pageCount}`);
-		add("‹", "previous");
-		add("›", "next");
-		add(state.showDone ? "Without done" : "All", "filter");
-		add("Alt+Shift+P/N/H");
-		lines.push(theme.fg("dim", control));
-	}
+	if (tasks.length >= capacity)
+		lines.push(
+			controlRow(theme, state, visible.length, tasks.length, {
+				width: safeWidth,
+				row: lines.length,
+				page: effectivePage,
+				pageCount,
+				targets,
+			}),
+		);
 	lines.push(bottom, "");
 	return {
 		lines: lines.map((line) => truncateToWidth(line, safeWidth)),
 		capacity,
 		page: effectivePage,
 		pageCount,
+		shown: tasksOnPage.length,
 		targets,
 	};
+}
+
+// The visible over total count, then page position, navigation, filter and
+// hints, each only while it fits; its targets are pushed for `row`.
+function controlRow(
+	theme: TodoTheme,
+	state: TodoBoxState,
+	visible: number,
+	total: number,
+	at: {
+		width: number;
+		row: number;
+		page: number;
+		pageCount: number;
+		targets: TodoHitTarget[];
+	},
+) {
+	let control = `${visible}/${total} ${state.showDone ? "All" : "Without done"}`;
+	control = truncateToWidth(control, at.width);
+	let full = false;
+	const add = (label: string, action?: TodoHitAction) => {
+		const start = visibleWidth(control) + 1;
+		const end = start + visibleWidth(label);
+		if (full || end > at.width) {
+			full = true;
+			return;
+		}
+		control += ` ${label}`;
+		if (action) at.targets.push({ action, row: at.row, start, end });
+	};
+	add(`${at.page}/${at.pageCount}`);
+	add("‹", "previous");
+	add("›", "next");
+	add(state.showDone ? "Without done" : "All", "filter");
+	add("Alt+Shift+P/N/H");
+	return theme.fg("dim", control);
 }

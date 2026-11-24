@@ -9,6 +9,7 @@ import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
+	todoCapacity,
 	type TaskExecutors,
 	type TodoBoxState,
 	type TodoHitTarget,
@@ -20,6 +21,7 @@ import {
 	type Task,
 	type TaskState,
 } from "./todo-list.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 const TodoTaskState = Type.Union(
 	TASK_STATES.map((state) => Type.Literal(state)),
@@ -106,8 +108,24 @@ export function registerSessionTodo(
 ) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	let page = 1;
-	let pageCount: number | null = null;
+	// The browsing position: `offset` is the first task of the page the user
+	// chose, projected onto the page grid whenever density changes, so crossing
+	// 60 columns and back restores that page (NS-02). `paging` is the current
+	// page at the last paginated density and capacity; navigation moves it and
+	// the offset together, before any repaint.
+	type Paging = {
+		page: number;
+		narrow: boolean;
+		capacity: number;
+		pageCount: number;
+	};
+	let offset = 0;
+	let paging: Paging | null = null;
+	function turn(page: number) {
+		if (paging === null || page === paging.page) return;
+		paging = { ...paging, page };
+		offset = (page - 1) * paging.capacity;
+	}
 	let targets: TodoHitTarget[] = [];
 	function act(action: TodoHitAction) {
 		targets = [];
@@ -120,13 +138,14 @@ export function registerSessionTodo(
 				break;
 			case "filter":
 				boxState.showDone = !boxState.showDone;
-				page = 1;
+				offset = 0;
+				if (paging !== null) paging = { ...paging, page: 1 };
 				break;
 			case "previous":
-				page = Math.max(1, page - 1);
+				if (paging !== null) turn(Math.max(1, paging.page - 1));
 				break;
 			case "next":
-				if (pageCount !== null) page = Math.min(pageCount, page + 1);
+				if (paging !== null) turn(Math.min(paging.pageCount, paging.page + 1));
 				break;
 		}
 		requestRender();
@@ -135,6 +154,15 @@ export function registerSessionTodo(
 		occupyAboveInput(
 			"todo",
 			(width, theme, rows) => {
+				const narrow = narrowScreen();
+				const capacity = todoCapacity(rows);
+				// A density change projects the saved offset; at the same density the
+				// current page stands, and the renderer clamps it to the live count.
+				const projected =
+					capacity > 0 && (paging === null || paging.narrow !== narrow);
+				const page = projected
+					? Math.floor(offset / capacity) + 1
+					: (paging?.page ?? 1);
 				const layout = renderTodoBox(
 					theme,
 					todoList.list(),
@@ -144,8 +172,19 @@ export function registerSessionTodo(
 					rows,
 					page,
 				);
-				page = layout.page;
-				if (layout.pageCount !== null) pageCount = layout.pageCount;
+				// Deferred layouts (collapsed, compact, empty) rewrite nothing.
+				if (layout.pageCount !== null) {
+					// The saved offset stands while its task is rendered on the page
+					// shown; otherwise it moves to that page's first task.
+					const start = (layout.page - 1) * capacity;
+					if (offset < start || offset >= start + layout.shown) offset = start;
+					paging = {
+						page: layout.page,
+						narrow,
+						capacity,
+						pageCount: layout.pageCount,
+					};
+				}
 				targets = layout.targets;
 				return layout.lines;
 			},

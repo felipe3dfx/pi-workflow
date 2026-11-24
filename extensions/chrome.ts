@@ -28,8 +28,10 @@ import { readHeader, watchHeader } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	formatDuration,
+	narrowScreen,
 	spinnerMs,
 	spread,
+	setDensityTerminal,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -228,26 +230,74 @@ export function renderStatusRow(
 	data: StatusData,
 	width: number,
 ) {
-	const indent = marginFor(width) ? 2 : 0;
-	const room = width - marginFor(width) * 2 - indent;
+	const narrow = narrowScreen();
+	const indent = !narrow && marginFor(width) ? 2 : 0;
+	const room = narrow
+		? Math.max(0, width - 1)
+		: width - marginFor(width) * 2 - indent;
 	const spinner = workingFrames[data.frame % workingFrames.length];
-	const label = terminalSafeLine(data.label);
-	const activity = data.tool
-		? `${theme.fg("dim", "Run ")}${theme.fg("text", terminalSafeLine(data.tool))}`
-		: theme.fg("text", label);
-	const phase =
+	const name = terminalSafeLine(data.tool ?? data.label);
+	const step =
 		data.stepMs !== undefined && room >= phaseTimerMinWidth
-			? theme.fg("dim", ` ${formatDuration(data.stepMs)}`)
+			? formatDuration(data.stepMs)
 			: "";
-	const totals = [
-		data.turnMs !== undefined ? formatDuration(data.turnMs) : "",
-		data.outputTokens ? `⇣${formatOutputTokens(data.outputTokens)}` : "",
-	]
-		.filter(Boolean)
-		.join(" ");
-	const left = `${theme.fg("text", spinner)} ${activity}${phase}`;
-	if (!totals) return indented([truncateToWidth(left, room)], width, indent);
-	return indented([spread(left, theme.fg("dim", totals), room)], width, indent);
+	const phase = step ? theme.fg("dim", ` ${step}`) : "";
+	const turn = data.turnMs !== undefined ? formatDuration(data.turnMs) : "";
+	const tokens = data.outputTokens
+		? `⇣${formatOutputTokens(data.outputTokens)}`
+		: "";
+	const left = (run: boolean, shown = name) =>
+		`${theme.fg("text", spinner)} ${data.tool && run ? theme.fg("dim", "Run ") : ""}${theme.fg("text", shown)}${phase}`;
+	const right = (counted: boolean) =>
+		[turn, counted ? tokens : ""].filter(Boolean).join(" ");
+	const needed = (l: string, r: string) =>
+		visibleWidth(l) + (r ? 1 + visibleWidth(r) : 0);
+	const fits = needed(left(true), right(true)) <= room;
+	// Only the minute and hour formats grew, and only they hold a space; the
+	// base wrote `1m 05s` as `1m5s` and `1h 05m` as `1h5m`.
+	const legacy = (text: string) => text.replace(/ 0?/, "");
+	const grownBy =
+		visibleWidth(`${step}${turn}`) - visibleWidth(legacy(step) + legacy(turn));
+	const whole = phase ? fits : visibleWidth(right(true)) < room;
+	// Wide, only a row that a longer timer pushes past its room gives up fields;
+	// any other keeps them all and both timers, cutting the name as the base did.
+	const cascade = narrow
+		? grownBy > 0 || !whole
+		: !fits && needed(left(true), right(true)) - grownBy <= room;
+	// Without a step timer to keep, the painted row is cut as the base cut it.
+	const kept =
+		narrow || fits || !phase
+			? left(true)
+			: left(
+					true,
+					truncateToWidth(
+						name,
+						Math.max(0, room - needed(left(true, ""), right(true))),
+					),
+				);
+	const [l, r] =
+		!(phase || turn) || !cascade
+			? [kept, right(true)]
+			: // Overflow from a longer timer keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
+				([
+					[left(true), right(true)],
+					[left(false), right(true)],
+					[left(false), right(false)],
+				].find(([l, r]) => needed(l, r) <= room) ?? [
+					left(
+						false,
+						truncateToWidth(
+							name,
+							Math.max(0, room - needed(left(false, ""), right(false))),
+							"…",
+						),
+					),
+					right(false),
+				]);
+	const line = r
+		? spread(l, theme.fg("dim", r), room)
+		: truncateToWidth(l, room);
+	return narrow ? [line] : indented([line], width, indent);
 }
 
 const idleHints: [Keybinding, string][] = [
@@ -264,16 +314,62 @@ const workingHints: [Keybinding, string][] = [
 	["app.tools.expand", "expand"],
 ];
 
+// Narrow footers fit two or three hints, so they lead with the ones that matter most (NS-26).
+const narrowIdleHints: [Keybinding, string][] = [
+	["app.tools.expand", "expand"],
+	["app.model.cycleForward", "model"],
+	["app.thinking.cycle", "thinking"],
+	["app.clear", "clear"],
+];
+
+const narrowWorkingHints: [Keybinding, string][] = [
+	["app.interrupt", "interrupt"],
+	["tui.input.submit", "steer"],
+	["app.tools.expand", "expand"],
+	["app.message.followUp", "follow-up"],
+];
+
 export function footerHints(
 	working: boolean,
 	panel: Hint[] | undefined,
 	keys: KeyResolver,
 ): Hint[] {
 	if (panel) return panel;
-	return (working ? workingHints : idleHints).flatMap(([binding, action]) => {
+	const narrow = narrowScreen();
+	const order = working
+		? narrow
+			? narrowWorkingHints
+			: workingHints
+		: narrow
+			? narrowIdleHints
+			: idleHints;
+	return order.flatMap(([binding, action]) => {
 		const key = displayKey(keys(binding).split("/")[0] ?? "");
 		return key ? [{ key, action }] : [];
 	});
+}
+
+// Narrow hint rows read `Key action`, joined by ` · ` and wrapped between hints (NS-12).
+export function keyHintRows(theme: ChromeTheme, hints: Hint[], width: number) {
+	const separator = " · ";
+	const rows: string[] = [];
+	let line = "";
+	let used = 0;
+	for (const hint of hints) {
+		const key = terminalSafeLine(hint.key);
+		const action = terminalSafeLine(hint.action);
+		const size = visibleWidth(`${key} ${action}`);
+		const painted = `${theme.bold(theme.fg("text", key))}${theme.fg("dim", ` ${action}`)}`;
+		if (line && used + separator.length + size <= width) {
+			line += theme.fg("borderAccent", separator) + painted;
+			used += separator.length + size;
+			continue;
+		}
+		if (line) rows.push(line);
+		line = size > width ? truncateToWidth(painted, width, "…") : painted;
+		used = Math.min(size, width);
+	}
+	return line ? [...rows, line] : rows;
 }
 
 export function renderFooter(
@@ -282,11 +378,12 @@ export function renderFooter(
 	width: number,
 	statuses: string[] = [],
 ) {
-	const room = width - marginFor(width) * 2;
+	const narrow = narrowScreen();
+	const room = narrow ? width : width - marginFor(width) * 2;
 	const separator = theme.fg("borderAccent", "  │  ");
-	let line = "";
-	let used = 0;
-	for (const hint of hints) {
+	let line = narrow ? (keyHintRows(theme, hints, room)[0] ?? "") : "";
+	let used = visibleWidth(line);
+	for (const hint of narrow ? [] : hints) {
 		const key = terminalSafeLine(hint.key);
 		const action = terminalSafeLine(hint.action);
 		const gap = line ? 5 : 0;
@@ -305,8 +402,8 @@ export function renderFooter(
 		right += `${rightUsed ? "  " : ""}${theme.fg("dim", text)}`;
 		rightUsed += size;
 	}
-	if (!right) return indented([truncateToWidth(line, room)], width);
-	return indented([spread(line, right, room)], width);
+	const shown = right ? spread(line, right, room) : truncateToWidth(line, room);
+	return narrow ? [shown] : indented([shown], width);
 }
 
 export function registerChrome(
@@ -405,6 +502,7 @@ export function registerChrome(
 		fixed?.stop();
 		fixed = undefined;
 		renders.clear();
+		setDensityTerminal(undefined);
 		running.clear();
 		working = false;
 	}
@@ -463,6 +561,7 @@ export function registerChrome(
 			STATUS_WIDGET,
 			(tui, theme) => {
 				renders.add(tui);
+				setDensityTerminal(tui.terminal, tui);
 				return {
 					render: (width: number) => {
 						const data = statusData();
@@ -582,8 +681,17 @@ export function modelLabel(
 ) {
 	const model = ctx.model;
 	if (!model) return "";
-	const id = plainText(model.id);
+	const narrow = narrowScreen();
+	// Narrow captions drop the provider, including the `claude-` the model id repeats (NS-27; owner, #415).
+	const id = narrow
+		? plainText(model.id)
+				.replace(/^.*\//, "")
+				.replace(/^claude-/, "")
+		: plainText(model.id);
 	const level = ctx.thinkingLevel;
 	if (!model.reasoning || !level) return theme.fg("dim", id);
-	return theme.fg(thinkingTokens[level], id) + theme.fg("dim", ` (${level})`);
+	return (
+		theme.fg(thinkingTokens[level], id) +
+		theme.fg("dim", narrow ? ` · ${level}` : ` (${level})`)
+	);
 }

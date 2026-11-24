@@ -1,9 +1,5 @@
-import type {
-	ExtensionAPI,
-	Theme,
-	ThemeColor,
-} from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
 	type ChildRecord,
@@ -14,9 +10,11 @@ import { type Schedule, scheduleTimer } from "./clock.ts";
 import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
+	narrowScreen,
+	pinRight,
+	runStateMark,
 	spinnerMs,
 	spread,
-	themeVar,
 	workingFrames,
 } from "./visual-language.ts";
 
@@ -28,16 +26,6 @@ const maxFinished = 3;
 const maxRows = 8;
 const tickMs = 1000;
 const coalesceMs = 400;
-
-const glyphs: Record<ChildRecord["state"], [string, ThemeColor]> = {
-	queued: ["○", "muted"],
-	running: ["◐", "accent"],
-	waiting: ["?", "warning"],
-	completed: ["✓", "success"],
-	failed: ["✗", "error"],
-	cancelled: ["–", "muted"],
-	"timed out": ["⧖", "error"],
-};
 
 const rank: Record<ChildRecord["state"], number> = {
 	waiting: 0,
@@ -55,25 +43,25 @@ export function byState(a: ChildRecord, b: ChildRecord) {
 
 import { childElapsed, childModelLine, childStep } from "./child-projection.ts";
 
-function childMeta(child: ChildRecord, now: number) {
+function childMeta(child: ChildRecord, now: number, width: number) {
 	if (child.state === "queued") return "queued";
-	return `${childModelLine(child)} ${childElapsed(child, now)}`;
+	const elapsed = childElapsed(child, now);
+	const model = truncateToWidth(
+		childModelLine(child),
+		Math.max(0, width - visibleWidth(elapsed) - 2),
+	);
+	return `${model} ${elapsed}`;
 }
 
-const running = themeVar("cyan", glyphs.running[1]);
-
 export function childGlyph(theme: ChildTheme, child: ChildRecord) {
-	const [glyph, color] = glyphs[child.state];
-	return child.state === "running"
-		? running(glyph, theme)
-		: theme.fg(color, glyph);
+	return runStateMark(child.state).paint(theme);
 }
 
 function rowGlyph(theme: ChildTheme, child: ChildRecord, now: number) {
 	if (child.state !== "running") return childGlyph(theme, child);
 	const frame =
 		workingFrames[Math.floor(now / spinnerMs) % workingFrames.length];
-	return running(frame, theme);
+	return runStateMark("running").paint(theme, frame);
 }
 
 function childrenHeading(theme: ChildTheme, rows: ChildRecord[]) {
@@ -100,9 +88,27 @@ function renderChildRow(
 	width: number,
 ) {
 	const step = terminalSafeLine(childStep(child));
-	const meta = childMeta(child, now);
-	const left = ` ${rowGlyph(theme, child, now)} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
-	const line = spread(left, theme.fg("dim", meta), width);
+	const name = `${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
+	if (narrowScreen()) {
+		// Narrow rows start at column 0 and leave the model to the Fleet view, with
+		// no selection background (NS-10, NS-29); timed out shares ✗ with failed,
+		// so its state word tells them apart (D-open-2).
+		const word =
+			child.state === "timed out"
+				? ` ${runStateMark(child.state).paint(theme, "timed out")}`
+				: "";
+		const meta = child.state === "queued" ? "queued" : childElapsed(child, now);
+		return pinRight(
+			`${rowGlyph(theme, child, now)}${word} ${name}`,
+			theme.fg("dim", meta),
+			width,
+		);
+	}
+	const line = spread(
+		` ${rowGlyph(theme, child, now)} ${name}`,
+		theme.fg("dim", childMeta(child, now, width)),
+		width,
+	);
 	return active ? theme.bg("selectedBg", line) : line;
 }
 
@@ -126,16 +132,24 @@ export function renderChildrenBox(
 		.sort(byState);
 	if (rows.length === 0) return [];
 	const shown = rows.slice(0, maxRows);
-	const hint = theme.fg("dim", "alt+a view");
+	const narrow = narrowScreen();
+	const heading = narrow
+		? pinRight(childrenHeading(theme, rows), theme.fg("dim", "Alt+A"), width)
+		: spread(
+				childrenHeading(theme, rows),
+				theme.fg("dim", "alt+a view"),
+				width,
+			);
 	const lines = [
-		spread(childrenHeading(theme, rows), hint, width),
+		heading,
 		...shown.map((child, i) =>
 			renderChildRow(theme, child, now, i === 0, width),
 		),
 	];
 	if (rows.length > shown.length) {
+		const more = `… ${rows.length - shown.length} more ·`;
 		lines.push(
-			theme.fg("dim", ` … ${rows.length - shown.length} more · alt+a view`),
+			theme.fg("dim", narrow ? `${more} Alt+A` : ` ${more} alt+a view`),
 		);
 	}
 	return lines.map((line) => truncateToWidth(line, width));

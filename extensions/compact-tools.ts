@@ -22,6 +22,8 @@ import { seated } from "./shell.ts";
 import { settings, shellOptions } from "./shell-settings.ts";
 import {
 	theme as activeTheme,
+	narrowScreen,
+	runStateMark,
 	themeBgVar,
 	themeVar,
 } from "./visual-language.ts";
@@ -105,7 +107,18 @@ const pathTools = new Set(["read", "ls", "edit", "write"]);
 const running = themeVar("cyan", "dim");
 const pathDetail = themeVar("orange", "dim");
 
-type Status = { isError: boolean; isPartial: boolean };
+type Status = {
+	isError: boolean;
+	isPartial: boolean;
+	executionStarted?: boolean;
+};
+
+// A streamed call waits muted until Pi starts executing it; a result wins.
+function runState(status: Status) {
+	if (status.isError) return "failed";
+	if (!status.isPartial) return "completed";
+	return status.executionStarted ? "running" : "queued";
+}
 
 function toolRow(
 	theme: Theme,
@@ -114,11 +127,14 @@ function toolRow(
 	detail = "",
 	path = false,
 ) {
-	const glyph = status.isError
-		? theme.fg("error", "◆")
-		: status.isPartial
-			? running("◆", theme)
-			: theme.fg("toolTitle", "◆");
+	// The glyph stays ◆ in every state; narrow, only its colour follows the scale (NS-15).
+	const glyph = narrowScreen()
+		? runStateMark(runState(status)).paint(theme, "◆")
+		: status.isError
+			? theme.fg("error", "◆")
+			: status.isPartial
+				? running("◆", theme)
+				: theme.fg("toolTitle", "◆");
 	const head = theme.bold(theme.fg("muted", label));
 	if (!detail) return `${glyph} ${head}`;
 	return `${glyph} ${head} ${path ? pathDetail(detail, theme) : theme.fg("dim", detail)}`;
@@ -202,7 +218,7 @@ function compact<
 				}) ?? hidden;
 			return new View(
 				own,
-				new TruncatedText(title(name, args, theme, context)),
+				live(() => title(name, args, theme, context)),
 				bar(theme, context.expanded),
 				name === "edit",
 			);
@@ -229,6 +245,15 @@ function compact<
 				name === "edit",
 			);
 		},
+	};
+}
+
+// Painted on every render, never cached at call time, so an existing row
+// follows the density of the width it is drawn at after a resize (NS-02).
+function live(paint: () => string): Component {
+	return {
+		render: (width) => new TruncatedText(paint()).render(width),
+		invalidate() {},
 	};
 }
 
@@ -277,18 +302,14 @@ function scriptRenderers(definition: ToolRenderers | undefined) {
 			const code = (args as { code?: unknown } | undefined)?.code;
 			const own =
 				definition?.renderCall?.(args, theme, unwrapped(context)) ?? hidden;
-			const head: Component = {
-				render: (width) =>
-					new TruncatedText(
-						toolRow(
-							theme,
-							context,
-							"Run script",
-							scriptDetail(code, state.calls ?? []),
-						),
-					).render(width),
-				invalidate() {},
-			};
+			const head = live(() =>
+				toolRow(
+					theme,
+					context,
+					"Run script",
+					scriptDetail(code, state.calls ?? []),
+				),
+			);
 			return new View(own, head, bar(theme, context.expanded));
 		},
 		renderResult(
@@ -319,11 +340,20 @@ function fallbackRenderers(toolName: string, own: ToolRenderers | undefined) {
 			theme: Theme,
 			context: Status & { expanded: boolean },
 		): Component {
-			const head = title(toolName, args, theme, context);
-			const body = JSON.stringify(args ?? {}, null, 2);
+			const head = () => title(toolName, args, theme, context);
+			const body = theme.fg("dim", JSON.stringify(args ?? {}, null, 2));
+			// One Text kept across redraws: setText with the freshly painted head
+			// keeps the live ◆ while unchanged text reuses Pi's wrapping cache.
+			const open = new Text("", 0, 0);
 			return new View(
-				new Text(`${head}\n${theme.fg("dim", body)}`, 0, 0),
-				new TruncatedText(head),
+				{
+					render(width) {
+						open.setText(`${head()}\n${body}`);
+						return open.render(width);
+					},
+					invalidate: () => open.invalidate(),
+				},
+				live(head),
 				bar(theme, context.expanded),
 			);
 		},

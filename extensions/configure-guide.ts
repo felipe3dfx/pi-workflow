@@ -15,6 +15,7 @@ import {
 	type MenuTheme,
 	modalFrame,
 	modalMetrics,
+	overlayAtOpen,
 	sectionRule,
 	selectedRow,
 } from "./chrome-menus.ts";
@@ -25,6 +26,7 @@ import {
 	type Selection,
 } from "./configure.ts";
 import { report } from "./model-profiles.ts";
+import { narrowScreen } from "./visual-language.ts";
 import {
 	type DelegationModeName,
 	delegationModes,
@@ -152,6 +154,7 @@ function createConfigGuide(
 	done: (confirmed: boolean) => void,
 ): Component {
 	const t = theme;
+	const narrow = narrowScreen();
 	const sections: { title: string; rows: Row[] }[] = [
 		{
 			title: "Capabilities",
@@ -305,6 +308,11 @@ function createConfigGuide(
 		return { copy, warning };
 	}
 
+	// Centred wide; `Key action · Key action` from the left below 60 columns (NS-33).
+	function hintLines(hints: Hint[], inner: number) {
+		return hintRows(t, hints, inner, { narrow }).lines;
+	}
+
 	function editHints(): Hint[] {
 		const hints: Hint[] = [["↑/↓", "move"]];
 		if (focus === actionIndex) hints.push(["Enter", "review"]);
@@ -349,7 +357,7 @@ function createConfigGuide(
 					).map((line) => t.fg("warning", line)),
 				]
 			: [];
-		let tail = ["", ...hintRows(t, editHints(), inner).lines];
+		let tail = ["", ...hintLines(editHints(), inner)];
 		let spare =
 			terminalRows() - 3 - warning.length - notice.length - tail.length;
 		let shownDetail = detail;
@@ -357,11 +365,7 @@ function createConfigGuide(
 		if (detail.length > spare - 1 && described.copy.length <= spare - 1) {
 			shownDetail = detail.slice(1);
 		} else if (described.copy.length > spare - 1) {
-			tail = hintRows(
-				t,
-				[...editHints(), ["PgUp/PgDn", "description"]],
-				inner,
-			).lines;
+			tail = hintLines([...editHints(), ["PgUp/PgDn", "description"]], inner);
 			spare = terminalRows() - 3 - warning.length - notice.length - tail.length;
 			if (spare < 3) {
 				frameSpacer = false;
@@ -380,11 +384,10 @@ function createConfigGuide(
 			);
 			const indicator = `${descriptionOffset > 0 ? "↑" : ""}${descriptionOffset < descriptionMax ? "↓" : ""} more`;
 			if (foldIndicator) {
-				tail = hintRows(
-					t,
+				tail = hintLines(
 					[...editHints(), ["PgUp/PgDn", `description ${indicator}`]],
 					inner,
-				).lines;
+				);
 			}
 			shownDetail = [
 				...described.copy
@@ -480,7 +483,7 @@ function createConfigGuide(
 			inner,
 		);
 		const fits = (hints: Hint[]) =>
-			terminalRows() - 6 - hintRows(t, hints, inner).lines.length;
+			terminalRows() - 6 - hintLines(hints, inner).length;
 		const scrolls =
 			all.length >
 			fits([
@@ -509,7 +512,7 @@ function createConfigGuide(
 			"",
 			applyLine,
 			"",
-			...hintRows(t, hints, inner).lines,
+			...hintLines(hints, inner),
 		];
 		return {
 			lines,
@@ -540,9 +543,10 @@ function createConfigGuide(
 		render(width) {
 			frameWidth = width;
 			frameSpacer = true;
-			const inner = Math.max(1, modalMetrics(width).inner);
+			const metrics = modalMetrics(width, narrow);
+			const inner = Math.max(1, metrics.inner);
 			const view = screen === "edit" ? renderEdit(inner) : renderReview(inner);
-			const titleRoom = width - 6 - (modalMetrics(width).close ? 5 : 0);
+			const titleRoom = width - 6 - (metrics.close ? 5 : 0);
 			const full = `Workflow config${pending() || installs() ? ` · ${summary()}` : ""}`;
 			const title =
 				screen === "review"
@@ -556,6 +560,7 @@ function createConfigGuide(
 				title,
 				[...(frameSpacer ? [""] : []), ...view.lines],
 				width,
+				narrow,
 			);
 		},
 		invalidate() {},
@@ -568,7 +573,7 @@ function createConfigGuide(
 				return { handled: true };
 			}
 			if (event.type !== "click" || event.button !== "left") return undefined;
-			const shut = modalMetrics(frameWidth).close;
+			const { close: shut, inset } = modalMetrics(frameWidth, narrow);
 			if (
 				event.y === 0 &&
 				shut &&
@@ -578,6 +583,8 @@ function createConfigGuide(
 				cancel();
 				return { handled: true };
 			}
+			if (narrow && (event.x < inset || event.x >= frameWidth - inset))
+				return undefined;
 			const target = targets[event.y - 1];
 			if (!target) return undefined;
 			confirmDiscard = false;
@@ -674,12 +681,12 @@ export async function guideSelection(
 			),
 		{
 			overlay: true,
-			overlayOptions: {
+			overlayOptions: overlayAtOpen({
 				anchor: "center",
 				width: "70%",
 				minWidth: 48,
 				maxHeight: "100%",
-			},
+			}),
 		},
 	);
 	return confirmed

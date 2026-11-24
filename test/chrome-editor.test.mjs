@@ -8,7 +8,9 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 
+import { modelLabel } from "../extensions/chrome.ts";
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 const marked = {
 	fg: (color, text) => `<${color}>${text}</${color}>`,
@@ -208,6 +210,86 @@ test("the slash token keeps its own color inside the text color", async () => {
 	const line = first(input);
 	assert.match(line, /<text><mdHeading>\/execute-plan<\/mdHeading> doc\.md/);
 	assert.equal(line.split(CURSOR_MARKER).length, 2);
+});
+
+function opus(theme = bare) {
+	return createChromeEditor(
+		{ terminal: { rows: 40 }, requestRender() {} },
+		{ borderColor: (text) => text, selectList: {} },
+		{ matches: () => false },
+		{
+			theme: () => theme,
+			label: () =>
+				modelLabel(
+					{
+						model: { id: "claude-opus-5-5", reasoning: true },
+						thinkingLevel: "high",
+					},
+					theme,
+				),
+		},
+	);
+}
+
+test("below 60 terminal columns the editor touches the edge, with the short placeholder and the model and level caption", (t) => {
+	densityTerminal(t, 44);
+	assert.deepEqual(opus().render(44).map(visible), [
+		`╭${"─".repeat(42)}╮`,
+		`│ ❯  What should we build?${" ".repeat(17)}│`,
+		`╰${"─".repeat(24)} opus-5-5 · high ─╯`,
+	]);
+});
+
+test("below 60 terminal columns the caption drops a leading claude- and a provider prefix, and keeps other ids whole", (t) => {
+	densityTerminal(t, 44);
+	const label = (id, reasoning = true) =>
+		modelLabel({ model: { id, reasoning }, thinkingLevel: "high" }, marked);
+	assert.equal(
+		label("claude-opus-5-5"),
+		"<thinkingHigh>opus-5-5</thinkingHigh><dim> · high</dim>",
+	);
+	assert.equal(
+		label("gpt-6-astra"),
+		"<thinkingHigh>gpt-6-astra</thinkingHigh><dim> · high</dim>",
+	);
+	assert.equal(
+		label("openrouter/claude-sonnet-5-5"),
+		"<thinkingHigh>sonnet-5-5</thinkingHigh><dim> · high</dim>",
+	);
+	assert.equal(label("claude-haiku-5-5", false), "<dim>haiku-5-5</dim>");
+});
+
+test("below 60 terminal columns a click on a typed character lands on that character with no margin", (t) => {
+	densityTerminal(t, 44);
+	const input = opus();
+	input.setText("hello world");
+	const [, row] = input.render(44).map(visible);
+	assert.equal(row.slice(0, 11), "│ ❯ hello w");
+	input.handleMouse({
+		type: "click",
+		button: "left",
+		x: 7,
+		y: 1,
+		width: 44,
+		height: 3,
+	});
+	assert.deepEqual(input.getCursor(), { line: 0, col: 3 });
+});
+
+test("crossing 60 terminal columns in both directions keeps the typed text and cursor while the margin follows the terminal", (t) => {
+	const terminal = densityTerminal(t, 59);
+	const input = opus();
+	input.setText("hello world");
+	input.handleInput("\x1b[D");
+	const top = (columns) => {
+		terminal.columns = columns;
+		return input.render(columns).map(visible)[0];
+	};
+	assert.equal(top(59), `╭${"─".repeat(57)}╮`);
+	assert.equal(top(60), ` ╭${"─".repeat(56)}╮`);
+	assert.equal(top(59), `╭${"─".repeat(57)}╮`);
+	assert.equal(input.getText(), "hello world");
+	assert.deepEqual(input.getCursor(), { line: 0, col: 10 });
 });
 
 test("command names in the autocomplete rows get a slash prefix, and other completions do not", async () => {

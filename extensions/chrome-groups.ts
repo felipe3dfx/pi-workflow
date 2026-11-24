@@ -12,7 +12,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { theme } from "./visual-language.ts";
+import type { Margin } from "./chrome-messages.ts";
+import { narrowScreen, theme } from "./visual-language.ts";
 
 const maxVisible = 10;
 
@@ -154,13 +155,19 @@ type ChildLines = {
 	lines: readonly string[];
 };
 
-type Entry = Target & { key: object; from: number };
-type Place = { key: object; y: number };
+type Indent = (width: number) => Margin;
+// A selectable head: a row or a group label, the `ordinal`-th selectable
+// segment of `component`, rendered at `row`.
+type Head = {
+	row: number;
+	component: Component;
+	ordinal: number;
+	kind: "row" | "group";
+};
 type View = {
 	width: number;
-	edge: number;
-	heads: number[];
-	places: Place[];
+	margin: Margin;
+	heads: Head[];
 	targets: Target[];
 	total: number;
 };
@@ -170,7 +177,7 @@ export type Viewport = {
 };
 
 const views = new WeakMap<Container, View>();
-const cursors = new WeakMap<Container, Place>();
+const cursors = new WeakMap<Container, Head>();
 const viewports = new WeakMap<Container, Viewport>();
 let current: Container | undefined;
 const cursorListeners = new Set<() => void>();
@@ -375,17 +382,11 @@ function groupLabel(members: Seg[], width: number) {
 	);
 }
 
-function header(
-	members: Seg[],
-	key: object,
-	indent: (width: number) => number,
-): Component {
+function header(members: Seg[], key: object, indent: Indent): Component {
 	return {
 		render(width: number) {
-			const edge = indent(width);
-			return [
-				`${" ".repeat(edge)}${groupLabel(members, Math.max(1, width - edge * 2))}`,
-			];
+			const { left, width: room } = indent(width);
+			return [`${" ".repeat(left)}${groupLabel(members, Math.max(1, room))}`];
 		},
 		invalidate() {},
 		handleMouse(event) {
@@ -409,7 +410,7 @@ function shifted(child: Component, from: number, height: number): Component {
 function renderChat(
 	children: readonly Component[],
 	width: number,
-	indent: (width: number) => number,
+	indent: Indent,
 ) {
 	const rendered = new Map<Component, readonly string[]>();
 	const segs: Seg[] = [];
@@ -456,8 +457,23 @@ function renderChat(
 		else if (!hidden.has(seg)) state = compact(seg);
 	}
 	const lines: string[] = [];
-	const mouse: Entry[] = [];
-	const heads = new Set<number>();
+	const mouse: Target[] = [];
+	const heads = new Map<number, Head>();
+	const head = (seg: Seg, kind: Head["kind"]) =>
+		heads.set(lines.length, {
+			row: lines.length,
+			component: seg.child,
+			ordinal: ordinals.get(seg) ?? 0,
+			kind,
+		});
+	const ordinals = new Map<Seg, number>();
+	const counts = new Map<Component, number>();
+	for (const seg of segs)
+		if (seg.clickable) {
+			const count = counts.get(seg.child) ?? 0;
+			ordinals.set(seg, count);
+			counts.set(seg.child, count + 1);
+		}
 	const bodies = new Set<number>();
 	let carry = "";
 	let last: { child: Component; next: number } | undefined;
@@ -467,7 +483,7 @@ function renderChat(
 		part[0] = carry + part[0];
 		carry = "";
 		if (seg.clickable) {
-			heads.add(lines.length);
+			head(seg, "row");
 			if (seg.open && seg.role === "tool")
 				for (let i = 1; i < part.length; i++) bodies.add(lines.length + i);
 		}
@@ -480,8 +496,6 @@ function renderChat(
 				component:
 					seg.from === 0 ? seg.child : shifted(seg.child, seg.from, all.length),
 				height: part.length,
-				key: seg.child,
-				from: seg.from,
 			});
 		last = { child: seg.child, next: seg.to };
 	};
@@ -490,12 +504,12 @@ function renderChat(
 			carry += (rendered.get(seg.child) ?? []).slice(seg.from, seg.to).join("");
 			return;
 		}
-		const head = headers.get(seg);
-		if (head) {
-			heads.add(lines.length);
-			lines.push(carry + head.render(width)[0]);
+		const label = headers.get(seg);
+		if (label) {
+			head(seg, "group");
+			lines.push(carry + label.render(width)[0]);
 			carry = "";
-			mouse.push({ component: head, height: 1, key: seg.child, from: -1 });
+			mouse.push({ component: label, height: 1 });
 			last = undefined;
 		}
 		if (!hidden.has(seg)) emit(seg);
@@ -514,7 +528,7 @@ function rows(
 	container: Container,
 	chat: ReturnType<typeof renderChat>,
 	width: number,
-	edge: number,
+	margin: Margin,
 ): Target[] {
 	const { lines, mouse, heads, bodies } = chat;
 	const owners: { component: Component; y: number; height: number }[] = [];
@@ -541,12 +555,18 @@ function rows(
 					return { handled: true, render: true };
 				}
 				if (bodies.has(at) && event.type !== "wheel") return undefined;
+				if (
+					narrowScreen() &&
+					event.type !== "wheel" &&
+					!margin.mouse({ ...event, width })
+				)
+					return undefined;
 				const owner = owners[at];
 				return owner.component.handleMouse?.({
 					...event,
 					x: Math.min(
-						Math.max(event.x, edge),
-						Math.max(edge, width - edge - 1),
+						Math.max(event.x, margin.left),
+						margin.left + Math.max(0, margin.width - 1),
 					),
 					y: owner.y,
 					height: owner.height,
@@ -556,19 +576,23 @@ function rows(
 	}));
 }
 
-function cursorLine(container: Container) {
+function cursorAt(container: Container) {
 	const cursor = cursors.get(container);
 	const view = views.get(container);
-	if (!cursor || !view) return undefined;
-	const line = view.places.findIndex(
-		(place) => place.key === cursor.key && place.y === cursor.y,
+	if (!cursor || !view) return -1;
+	return view.heads.findIndex(
+		(head) =>
+			head.component === cursor.component &&
+			head.ordinal === cursor.ordinal &&
+			head.kind === cursor.kind,
 	);
-	return line >= 0 && view.heads.includes(line) ? line : undefined;
 }
 
 function selected(line: string, width: number) {
-	const pad = " ".repeat(Math.max(0, width - visibleWidth(line)));
-	return theme().bg("selectedBg", line + pad);
+	const fitted =
+		visibleWidth(line) > width ? truncateToWidth(line, width, "") : line;
+	const pad = " ".repeat(Math.max(0, width - visibleWidth(fitted)));
+	return theme().bg("selectedBg", fitted + pad);
 }
 
 export const transcriptCursor = {
@@ -578,31 +602,31 @@ export const transcriptCursor = {
 	move(delta: -1 | 1) {
 		const view = current && views.get(current);
 		if (!current || !view || view.heads.length === 0) return false;
-		const line = cursorLine(current);
-		const at = line === undefined ? -1 : view.heads.indexOf(line);
+		const at = cursorAt(current);
 		const next =
 			at < 0
 				? view.heads.length - 1
 				: Math.min(view.heads.length - 1, Math.max(0, at + delta));
 		const head = view.heads[next];
 		const entering = !cursors.has(current);
-		cursors.set(current, view.places[head]);
-		viewports.get(current)?.reveal(head, view.total);
+		cursors.set(current, head);
+		viewports.get(current)?.reveal(head.row, view.total);
 		if (entering) for (const listener of cursorListeners) listener();
 		return true;
 	},
 	toggle() {
 		const view = current && views.get(current);
-		const line = current && cursorLine(current);
-		if (!view || line === undefined) return false;
+		if (!current || !view) return false;
+		const line = view.heads[cursorAt(current)]?.row;
+		if (line === undefined) return false;
 		const result = view.targets[line]?.component.handleMouse?.({
 			type: "click",
 			button: "left",
-			x: view.edge,
+			x: view.margin.left,
 			y: 0,
 			width: view.width,
 			height: 1,
-			screenX: view.edge,
+			screenX: view.margin.left,
 			screenY: 0,
 			shift: false,
 			alt: false,
@@ -626,7 +650,7 @@ export const transcriptCursor = {
 
 export function patchChat(
 	container: Container,
-	indent: (width: number) => number,
+	indent: Indent,
 	viewport?: Viewport,
 ) {
 	if (viewport && !viewports.has(container)) viewports.set(container, viewport);
@@ -640,8 +664,8 @@ export function patchChat(
 	target.render = (width: number) => {
 		try {
 			const chat = renderChat(target.children, width, indent);
-			const edge = indent(width);
-			const targets = rows(container, chat, width, edge);
+			const margin = indent(width);
+			const targets = rows(container, chat, width, margin);
 			let at = 0;
 			target.childLines = {
 				width,
@@ -653,24 +677,19 @@ export function patchChat(
 				lines: chat.lines,
 			};
 			current = container;
-			const places = chat.mouse.flatMap(({ key, from, height }) =>
-				Array.from({ length: height }, (_, y) => ({
-					key,
-					y: from < 0 ? -1 : from + y,
-				})),
-			);
+			const heads = [...chat.heads.values()];
 			views.set(container, {
 				width,
-				edge,
-				heads: [...chat.heads].sort((a, b) => a - b),
-				places,
+				margin,
+				heads,
 				targets,
 				total: chat.lines.length,
 			});
 			const point = hovered.get(container);
-			const cursor = cursorLine(container);
+			const cursor = heads[cursorAt(container)]?.row;
+			const paint = narrowScreen() ? margin.left + margin.width : width;
 			return chat.lines.map((line, i) => {
-				if (i === cursor) return selected(pointAt(line), width);
+				if (i === cursor) return selected(pointAt(line), paint);
 				return i === point && chat.heads.has(point) ? pointAt(line) : line;
 			});
 		} catch {

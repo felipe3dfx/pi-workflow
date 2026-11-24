@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { stripTerminalSequences, visibleWidth } from "@earendil-works/pi-tui";
 
@@ -19,7 +20,14 @@ import {
 	createChromeEditor,
 	PLACEHOLDER,
 } from "../extensions/chrome-editor.ts";
-import { formatDuration } from "../extensions/visual-language.ts";
+import { childElapsed } from "../extensions/child-projection.ts";
+import {
+	formatDuration,
+	narrowScreen,
+	setDensityTerminal,
+} from "../extensions/visual-language.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { sgrTheme, wideInput } from "./support/wide-input.mjs";
 
 const theme = {
 	fg: (_color, text) => text,
@@ -230,7 +238,7 @@ test("below the width its protected parts need the header truncates the whole li
 		}
 });
 
-test("token counts and durations use the compact formats", () => {
+test("token counts use the compact formats", () => {
 	assert.deepEqual(
 		[999, 3_000, 34_567, 256_000, 1_000_000, 12_000_000].map(
 			formatContextTokens,
@@ -241,10 +249,69 @@ test("token counts and durations use the compact formats", () => {
 		[420, 2_960, 34_000, 340_000, 1_200_000].map(formatOutputTokens),
 		["420", "2.96k", "34.0k", "340k", "1.20m"],
 	);
+});
+
+const durations = [
+	[-500, "0.0s"],
+	[0, "0.0s"],
+	[3_200, "3.2s"],
+	[3_640, "3.6s"],
+	[9_940, "9.9s"],
+	[9_960, "10s"],
+	[10_000, "10s"],
+	[12_400, "12s"],
+	[12_460, "12s"],
+	[12_500, "13s"],
+	[12_600, "13s"],
+	[59_400, "59s"],
+	[59_600, "1m 00s"],
+	[60_000, "1m 00s"],
+	[65_000, "1m 05s"],
+	[128_000, "2m 08s"],
+	[3_599_400, "59m 59s"],
+	[3_599_600, "1h 00m"],
+	[3_720_000, "1h 02m"],
+	[3_900_000, "1h 05m"],
+];
+
+test("durations read 3.2s under 10 s, rounded whole seconds, then 1m 05s, then 1h 05m", () => {
 	assert.deepEqual(
-		[3_640, 9_960, 44_000, 59_600, 128_000, 3_720_000].map(formatDuration),
-		["3.6s", "10s", "44s", "1m0s", "2m8s", "1h2m"],
+		durations.map(([ms]) => formatDuration(ms)),
+		durations.map(([, label]) => label),
 	);
+});
+
+test("a child's elapsed time reads the same as any other duration of the same length", () => {
+	for (const [ms, label] of durations.filter(([ms]) => ms >= 0)) {
+		assert.equal(
+			childElapsed({ createdAt: 1_000, endedAt: 1_000 + ms }, 0),
+			label,
+		);
+		assert.equal(
+			childElapsed({ createdAt: 0, startedAt: 2_000 }, 2_000 + ms),
+			label,
+		);
+	}
+	assert.equal(childElapsed({ createdAt: 5_000 }, 4_000), "0.0s");
+});
+
+test("the status row reads the same durations on narrow and wide terminals", (t) => {
+	const terminal = densityTerminal(t, 44);
+	for (const [columns, width] of [
+		[44, 43],
+		[100, 100],
+	]) {
+		terminal.columns = columns;
+		const [line] = plain(
+			renderStatusRow(
+				theme,
+				{ frame: 0, label: "Working", stepMs: 3_240, turnMs: 65_000 },
+				width,
+			),
+		);
+		if (columns < 60) assert.match(line, /^⠋ Working {27}1m 05s$/);
+		else assert.match(line, /Working 3\.2s +1m 05s$/);
+	}
 });
 
 test("the status row shows the spinner, activity, and step time on the left and the turn time and output tokens on the right", () => {
@@ -306,6 +373,70 @@ test("the footer shows Pi's real keys for the idle and working contexts, and the
 		plain(renderFooter(theme, footerHints(true, panel, resolve), 100)),
 		[" ↑/↓:select  │  Tab:next option  │  Esc:cancel"],
 	);
+});
+
+test("below 60 terminal columns the footer joins Key action hints with · from the edge, expand first when idle and third while working", (t) => {
+	const terminal = densityTerminal(t, 44);
+	const idle = () => footerHints(false, undefined, resolve);
+	const working = () => footerHints(true, undefined, resolve);
+	assert.deepEqual(plain(renderFooter(theme, idle(), 44)), [
+		"Ctrl+O expand · Ctrl+P model",
+	]);
+	assert.deepEqual(plain(renderFooter(theme, working(), 44)), [
+		"Esc interrupt · Enter steer · Ctrl+O expand",
+	]);
+	terminal.columns = 59;
+	assert.deepEqual(plain(renderFooter(theme, idle(), 59)), [
+		"Ctrl+O expand · Ctrl+P model · Shift+Tab thinking",
+	]);
+	assert.deepEqual(plain(renderFooter(theme, working(), 59)), [
+		"Esc interrupt · Enter steer · Ctrl+O expand",
+	]);
+	assert.deepEqual(
+		plain(renderFooter(theme, idle(), 59, ["build ok", "lsp: ts"])),
+		["Ctrl+O expand · Ctrl+P model · Shift+Tab thinking  build ok"],
+	);
+});
+
+test("at 60 and 100 terminal columns the footer and the editor render the base's bytes", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const label = () =>
+		modelLabel(
+			{
+				model: { id: "claude-opus-5-5", reasoning: true },
+				thinkingLevel: "high",
+			},
+			sgrTheme,
+		);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		const footer = (working, statuses) =>
+			renderFooter(
+				sgrTheme,
+				footerHints(working, undefined, resolve),
+				columns,
+				statuses,
+			);
+		assert.deepEqual(
+			{
+				idle: footer(false, ["build ok", "lsp: ts"]),
+				working: footer(true),
+			},
+			wideInput.footer[columns],
+		);
+		const input = createChromeEditor(
+			{ terminal: { rows: 40 }, requestRender() {} },
+			{ borderColor: (text) => text, selectList: {} },
+			{ matches: () => false },
+			{ theme: () => sgrTheme, label },
+		);
+		const empty = input.render(columns);
+		input.setText("hello world");
+		assert.deepEqual(
+			{ empty, typed: input.render(columns) },
+			wideInput.editor[columns],
+		);
+	}
 });
 
 test("the footer drops the hints that do not fit instead of cutting one in half", () => {
@@ -819,4 +950,184 @@ test("the autocomplete rows and box clicks stay aligned inside the margin and ar
 	});
 	assert.deepEqual(small.getCursor(), { line: 0, col: 2 });
 	assert.match(plain(small.render(14))[0], /^╭/);
+});
+
+test("below 60 terminal columns the status row spinner sits in the lane with a 1-column right margin", (t) => {
+	const data = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
+	densityTerminal(t, 44);
+	const [line] = plain(renderStatusRow(theme, data, 44));
+	assert.equal(line, `⠋ Run read${" ".repeat(30)}13s`);
+	assert.equal(visibleWidth(line), 43);
+	for (const width of [20, 8, 1])
+		assert.ok(visibleWidth(renderStatusRow(theme, data, width)[0]) <= width);
+});
+
+test("a status row too tight for every field keeps both timers whole, dropping Run, then the token count, then shortening the name", (t) => {
+	const terminal = densityTerminal(t, 44);
+	const status = (columns, data) => {
+		terminal.columns = columns;
+		return plain(
+			renderStatusRow(theme, { frame: 0, label: "Working", ...data }, columns),
+		)[0];
+	};
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		status(44, {
+			tool: "mcp__context7__query_docs",
+			turnMs: 65_000,
+			outputTokens: 3_000,
+		}),
+		"⠋ mcp__context7__query_docs   1m 05s ⇣3.00k",
+	);
+	assert.equal(
+		status(60, {
+			tool: "mcp__github__get_pull_request_comments",
+			turnMs: 65_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ mcp__github__get_pull_request_comments   1m 05s ⇣3.00k",
+	);
+	assert.equal(
+		status(70, {
+			tool: list,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 50,
+		}),
+		"   ⠋ mcp__github__list_pull_request_review_comments 1m 05s 1m 09s ⇣50",
+	);
+	assert.equal(
+		status(44, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
+		"⠋ mcp__github__list_pull_request_re… 1m 05s",
+	);
+});
+
+test("a wide status row the base already cut keeps Run, the token count and both whole timers, cutting only the name with ...", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const status = (columns, data) => {
+		terminal.columns = columns;
+		return plain(
+			renderStatusRow(theme, { frame: 0, label: "Working", ...data }, columns),
+		)[0];
+	};
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		status(64, {
+			tool: list,
+			stepMs: 12_000,
+			turnMs: 45_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ Run mcp__github__list_pull_request_revie... 12s 45s ⇣3.00k",
+	);
+	assert.equal(
+		status(60, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
+		"   ⠋ Run mcp__github__list_pull_request_re... 1m 05s ⇣3.00k",
+	);
+	assert.equal(
+		status(70, {
+			tool: list,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ Run mcp__github__list_pull_request_revie... 1m 05s 1m 09s ⇣3.00k",
+	);
+	assert.equal(
+		status(70, {
+			tool: `${list}_and_threads`,
+			stepMs: 65_000,
+			turnMs: 69_000,
+			outputTokens: 50,
+		}),
+		"   ⠋ Run mcp__github__list_pull_request_review_c... 1m 05s 1m 09s ⇣50",
+	);
+});
+
+test("a status row whose whole timers kept their width keeps the base's layout, cutting the name with ... before Run or the token count", (t) => {
+	densityTerminal(t, 60);
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		plain(
+			renderStatusRow(
+				theme,
+				{
+					frame: 0,
+					label: "Working",
+					tool: list,
+					turnMs: 45_000,
+					outputTokens: 3_000,
+				},
+				59,
+			),
+		)[0],
+		"   ⠋ Run mcp__github__list_pull_request_revi... 45s ⇣3.00k",
+	);
+});
+
+test("at 60 columns the Dark-theme status row that cuts the name with no step timer renders the base's bytes", (t) => {
+	densityTerminal(t, 60);
+	// The Dark theme's text and dim colors, as Pi paints them.
+	const sgr = { text: "38;2;222;224;225", dim: "38;2;126;136;142" };
+	const dark = {
+		fg: (color, text) => `\x1b[${sgr[color]}m${text}\x1b[39m`,
+		bold: (text) => `\x1b[1m${text}\x1b[22m`,
+		bg: (_color, text) => text,
+	};
+	const [line] = renderStatusRow(
+		dark,
+		{
+			frame: 0,
+			label: "Working",
+			tool: "mcp__github__list_pull_request_review_comments",
+			turnMs: 45_000,
+			outputTokens: 3_000,
+		},
+		60,
+	);
+	// Captured from 5d1f247, the base before narrow screens.
+	assert.equal(
+		line,
+		"   \x1b[38;2;222;224;225m⠋\x1b[39m \x1b[38;2;126;136;142mRun \x1b[39m\x1b[38;2;222;224;225mmcp__github__list_pull_request_revie\x1b[0m...\x1b[0m \x1b[38;2;126;136;142m45s ⇣3.00k\x1b[39m",
+	);
+	assert.equal(Buffer.byteLength(line), 162);
+});
+
+const wideBytes = JSON.parse(
+	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
+);
+const statusData = { frame: 0, label: "Working", tool: "read", turnMs: 13_000 };
+
+test("at 60 and 100 terminal columns the status row renders the base's bytes, and the header renders them at every terminal width", (t) => {
+	const terminal = densityTerminal(t, 60);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			renderStatusRow(painted, statusData, columns),
+			wideBytes.status[columns],
+		);
+	}
+	for (const columns of [44, 59, 60, 100]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			renderHeader(painted, header, columns),
+			wideBytes.header[columns],
+		);
+	}
+});
+
+test("the chrome reads the density from its TUI's live terminal columns and forgets the terminal when the session ends", async (t) => {
+	t.after(() => setDensityTerminal(undefined));
+	const chrome = fakeChrome();
+	await chrome.emit("session_start");
+	assert.equal(narrowScreen(), false);
+	const terminal = { rows: 40, columns: 44 };
+	chrome.factories.widget({ terminal, requestRender() {} }, theme);
+	assert.equal(narrowScreen(), true);
+	terminal.columns = 60;
+	assert.equal(narrowScreen(), false);
+	terminal.columns = 59;
+	assert.equal(narrowScreen(), true);
+	await chrome.emit("session_shutdown", { reason: "quit" });
+	assert.equal(narrowScreen(), false);
 });

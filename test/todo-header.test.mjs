@@ -1,8 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { stripVTControlCharacters } from "node:util";
+
 import { visibleWidth } from "@earendil-works/pi-tui";
 
+import { loadThemeFromPath } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js";
+
+import { childGlyph } from "../extensions/children-box.ts";
 import { renderTodoBox } from "../extensions/todo-header.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
 
 function fakeTheme() {
 	return {
@@ -105,6 +111,57 @@ test("each Task state renders its own glyph, keeping the pending box and the don
 	assert.ok(row("working task").includes("◐ working task"));
 	assert.ok(row("finished task").includes("✓ finished task"));
 	assert.ok(row("stuck task").includes("! stuck task"));
+});
+
+test("below 60 terminal columns a Task state shows the same glyph and colour as the Subagents box, and 60 columns or more keeps □ and the accent ◐", (t) => {
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"truecolor",
+	);
+	const tasks = [
+		{ id: 1, text: "pending task", state: "pending" },
+		{ id: 2, text: "working task", state: "in progress" },
+		{ id: 3, text: "finished task", state: "done" },
+		{ id: 4, text: "stuck task", state: "blocked" },
+	];
+	const marks = () =>
+		renderTodoBox(
+			workflow,
+			tasks,
+			{ collapsed: false, showDone: true },
+			200,
+			new Map(),
+			99,
+			1,
+		)
+			.lines.filter((line) => line.includes(" task"))
+			.map((line) => line.split(" ").find((part) => !part.includes("│")));
+	const cyan = "\x1b[38;2;125;207;255m";
+	const narrow = [
+		workflow.fg("muted", "○"),
+		`${cyan}◐\x1b[39m`,
+		workflow.fg("success", "✓"),
+		workflow.fg("warning", "!"),
+	];
+	const wide = [
+		workflow.fg("text", "□"),
+		workflow.fg("accent", "◐"),
+		...narrow.slice(2),
+	];
+	const terminal = densityTerminal(t, 44);
+	assert.deepEqual(marks(), narrow);
+	const child = (state) => childGlyph(workflow, { state });
+	assert.deepEqual(narrow.slice(0, 3), [
+		child("queued"),
+		child("running"),
+		child("completed"),
+	]);
+	terminal.columns = 60;
+	assert.deepEqual(marks(), wide);
+	terminal.columns = 59;
+	assert.deepEqual(marks(), narrow);
+	terminal.columns = 100;
+	assert.deepEqual(marks(), wide);
 });
 
 test("hiding done tasks removes only done rows", () => {
@@ -573,4 +630,105 @@ test("compact defers clamping until expansion, and the returned clamp persists o
 		larger.page,
 	);
 	assert.equal(restored.page, 2);
+});
+
+const numbered = (count) =>
+	Array.from({ length: count }, (_, i) => ({
+		id: i + 1,
+		text: `Task ${i + 1}`,
+		state: "pending",
+	}));
+
+test("below 60 terminal columns the Todo has no frame or blank rows, under a ▾ Todo heading counting done over total", (t) => {
+	densityTerminal(t, 44);
+	const tasks = [
+		{ id: 1, text: "Review the narrow terminal layout", state: "pending" },
+		{
+			id: 2,
+			text: "Capture render output at both widths",
+			state: "in progress",
+		},
+		{ id: 3, text: "Read the repository instructions", state: "done" },
+	];
+	const executors = new Map([[2, { role: "worker", id: "a1b2c3d4" }]]);
+	const layout = renderTodoBox(
+		fakeTheme(),
+		tasks,
+		{ collapsed: false, showDone: true },
+		44,
+		executors,
+		39,
+		1,
+	);
+	assert.deepEqual(layout.lines.map(stripVTControlCharacters), [
+		`▾ Todo 1/3${" ".repeat(23)}Alt+Shift+T`,
+		"○ Review the narrow terminal layout",
+		"◐ Capture render output at both widths ← wo…",
+		"✓ Read the repository instructions",
+	]);
+	assert.deepEqual(layout.targets, [
+		{ action: "collapse", row: 0, start: 0, end: 44 },
+	]);
+	const workflow = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"truecolor",
+	);
+	const [heading] = renderTodoBox(
+		workflow,
+		tasks,
+		{ collapsed: false, showDone: true },
+		44,
+		executors,
+		39,
+		1,
+	).lines;
+	assert.equal(
+		heading,
+		`${workflow.fg("dim", "▾")} ${workflow.bold(workflow.fg("muted", "Todo"))} ${workflow.fg("dim", "1/3")}${" ".repeat(23)}${workflow.fg("dim", "Alt+Shift+T")}`,
+	);
+});
+
+test("below 60 terminal columns the Todo pages within a third of the terminal rows, counting only its heading and control row as overhead", (t) => {
+	densityTerminal(t, 43);
+	const layout = (rows, page = 1) =>
+		renderTodoBox(
+			fakeTheme(),
+			numbered(12),
+			{ collapsed: false, showDone: true },
+			43,
+			new Map(),
+			rows,
+			page,
+		);
+	const heading = `▾ Todo 0/12${" ".repeat(21)}Alt+Shift+T`;
+	const device = layout(31);
+	assert.equal(device.capacity, 8);
+	assert.deepEqual(device.lines, [
+		heading,
+		...Array.from({ length: 8 }, (_, i) => `○ Task ${i + 1}`),
+		"12/12 All 1/2 ‹ › Without done",
+	]);
+	assert.deepEqual(device.targets, [
+		{ action: "collapse", row: 0, start: 0, end: 43 },
+		{ action: "previous", row: 9, start: 14, end: 15 },
+		{ action: "next", row: 9, start: 16, end: 17 },
+		{ action: "filter", row: 9, start: 18, end: 30 },
+	]);
+	assert.deepEqual(layout(31, 2).lines, [
+		heading,
+		"○ Task 9",
+		"○ Task 10",
+		"○ Task 11",
+		"○ Task 12",
+		"12/12 All 2/2 ‹ › Without done",
+	]);
+	assert.equal(layout(27).capacity, 7);
+	assert.equal(layout(27).lines.length, 9);
+	assert.deepEqual(layout(9).lines, [
+		heading,
+		"○ Task 1",
+		"12/12 All 1/12 ‹ › Without done",
+	]);
+	assert.deepEqual(layout(8).lines, ["12/12 All · Alt+Shift+T/H/P/N"]);
+	assert.deepEqual(layout(8).targets, []);
 });

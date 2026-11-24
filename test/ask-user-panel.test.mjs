@@ -15,10 +15,16 @@ import {
 	createAskUserChoiceTool,
 	createAskUserQuestionTool,
 } from "../extensions/ask-user-panel.ts";
-import { createFooterHints } from "../extensions/chrome.ts";
+import {
+	createFooterHints,
+	footerHints,
+	renderFooter,
+} from "../extensions/chrome.ts";
 import { createChildrenViews } from "../extensions/children-view.ts";
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
+import { densityTerminal } from "./support/density-terminal.mjs";
+import { sgrTheme, wideInput } from "./support/wide-input.mjs";
 
 replaceSelection({
 	schemaVersion: 1,
@@ -52,7 +58,7 @@ const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const SPACE = " ";
 
-function tuiContext(rows = 40) {
+function tuiContext(rows = 40, keybindings = fakeKeybindings) {
 	let component;
 	const host = { terminal: { rows } };
 	let resolveDone;
@@ -66,7 +72,7 @@ function tuiContext(rows = 40) {
 		ui: {
 			custom: (factory, options) => {
 				customOptions = options;
-				component = factory(host, fakeTheme, fakeKeybindings, (result) =>
+				component = factory(host, fakeTheme, keybindings, (result) =>
 					resolveDone(result),
 				);
 				return donePromise;
@@ -1887,6 +1893,521 @@ test("options are never hidden without a more row, even when that exceeds the ha
 		assert.deepEqual(shown, expected);
 		send("X");
 		await pending;
+	}
+});
+
+const rollout = {
+	question: "Which rollout should we use?",
+	options: [
+		{
+			label: "Gradual rollout",
+			description: "Start with a small test group and monitor results.",
+		},
+		{
+			label: "Full rollout",
+			description: "Make the change available to everyone immediately.",
+		},
+		{ label: "Wait" },
+	],
+};
+const footerKeys = {
+	"app.thinking.cycle": "shift+tab",
+	"app.model.cycleForward": "ctrl+p",
+	"app.tools.expand": "ctrl+o",
+	"app.clear": "ctrl+c",
+};
+const footerRow = (hints, width) =>
+	renderFooter(
+		fakeTheme,
+		footerHints(false, hints.get(), (binding) => footerKeys[binding] ?? ""),
+		width,
+	).map((line) => stripTerminalSequences(line));
+const boxed = (rows, inner) => [
+	`╭${"─".repeat(inner + 2)}╮`,
+	...rows.map((row) => `│ ${row.padEnd(inner)} │`),
+	`╰${"─".repeat(inner - 9)} question ─╯`,
+];
+
+test("below 60 terminal columns each description sits below its label, the cursor is ▸, and the hints show inside the panel instead of the footer", async (t) => {
+	densityTerminal(t, 44);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(hints);
+	const { ctx, send, renderRaw } = tuiContext(40);
+	assert.deepEqual(footerRow(hints, 44), ["Ctrl+O expand · Ctrl+P model"]);
+	const pending = tool.execute(
+		"call-narrow-look",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(44).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"Which rollout should we use?",
+				"",
+				"▸ 1  Gradual rollout",
+				"     Start with a small test group and",
+				"     monitor results.",
+				"  2  Full rollout",
+				"     Make the change available to",
+				"     everyone immediately.",
+				"  3  Wait",
+				"",
+				"  z  Type your answer",
+				"",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			40,
+		),
+	);
+	assert.deepEqual(footerRow(hints, 44), [""]);
+	send("X");
+	await pending;
+	assert.deepEqual(footerRow(hints, 44), ["Ctrl+O expand · Ctrl+P model"]);
+});
+
+test("below 60 terminal columns the panel keeps within half the terminal height, scrolling options whose descriptions take a second row", async (t) => {
+	densityTerminal(t, 44);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-cap",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	const lines = renderRaw(44).map((line) => stripTerminalSequences(line));
+	assert.ok(lines.length <= 15, `${lines.length} rows`);
+	assert.deepEqual(lines.slice(3, 7), [
+		"│ ▸ 1  Gradual rollout                     │",
+		"│      Start with a small test group and   │",
+		"│      monitor results.                    │",
+		"│      ↓ 2 more                            │",
+	]);
+	send("X");
+	await pending;
+});
+
+test("at 43x31 a focused middle option keeps its description below its label within half the terminal height, giving up blank rows and then separate more rows", async (t) => {
+	densityTerminal(t, 43);
+	const options = [
+		{ label: "Canary", description: "Ship to one region first." },
+		{ label: "Gradual rollout", description: "Track errors." },
+		{ label: "Full rollout", description: "Ship everywhere now." },
+	];
+	const hintRows = [
+		"↑/↓ move · Space mark",
+		"Enter select at least one",
+		"z edit free text · Esc panel stays open",
+		"Shift+X dismiss",
+	];
+	const shown = async (question, expected) => {
+		const tool = createAskUserChoiceTool(createFooterHints());
+		const { ctx, send, renderRaw } = tuiContext(31);
+		const pending = tool.execute(
+			"call-narrow-middle",
+			{ question, options, multiple: true },
+			undefined,
+			undefined,
+			ctx,
+		);
+		send(DOWN);
+		assert.deepEqual(
+			renderRaw(43).map((line) => stripTerminalSequences(line)),
+			boxed(expected, 39),
+		);
+		send("X");
+		await pending;
+	};
+	await shown(
+		"The staging rollout passed but two background jobs still use the old schema. Which rollout should we use?",
+		[
+			"The staging rollout passed but two",
+			"background jobs still use the old",
+			"schema. Which rollout should we use?",
+			"",
+			"         ↑ 1 more",
+			"▸ [ ] 2  Gradual rollout",
+			"         Track errors.",
+			"         ↓ 1 more",
+			"      z  Type your answer",
+			...hintRows,
+		],
+	);
+	await shown(
+		"The staging rollout passed but two background jobs still use the old schema, and the nightly export reads both tables while the billing worker writes only the new one.",
+		[
+			"The staging rollout passed but two",
+			"background jobs still use the old",
+			"schema, and the nightly export reads",
+			"both tables while the billing worker",
+			"writes only the new one.",
+			"▸ [ ] 2  Gradual rollout",
+			"         Track errors.",
+			"         ↑ 1 · ↓ 1 more",
+			"      z  Type your answer",
+			...hintRows,
+		],
+	);
+});
+
+const sixLineQuestion =
+	"The staging rollout passed but two background jobs still use the old schema, and the nightly export reads both tables. Which rollout should we use so we can deploy today without interrupting writes?";
+
+test("at 43x31 a choice that costs the same row as its more row is shown instead, and the focused description takes the rows left", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-equal-cost",
+		{
+			question: sixLineQuestion,
+			options: [
+				{
+					label: "Canary",
+					description:
+						"Start in one region and wait for the nightly export before expanding.",
+				},
+				{ label: "Wait until tomorrow" },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"The staging rollout passed but two",
+				"background jobs still use the old",
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"use so we can deploy today without",
+				"interrupting writes?",
+				"▸ 1  Canary",
+				"     Start in one region and wait for …",
+				"  2  Wait until tomorrow",
+				"  z  Type your answer",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			39,
+		),
+	);
+	send("X");
+	await pending;
+});
+
+test("at 43x31 a six-line question pages with PageDown so the focused description stays visible within half the terminal height", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-six-lines",
+		{
+			question: sixLineQuestion,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Gradual rollout", description: "Track errors." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+			multiple: true,
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const options = [
+		"▸ [ ] 2  Gradual rollout",
+		"         Track errors.",
+		"         ↑ 1 · ↓ 1 more",
+		"      z  Type your answer",
+		"↑/↓ move · Space mark",
+		"Enter select at least one",
+		"z edit free text · Esc panel stays open",
+		"Shift+X dismiss",
+	];
+	send(DOWN);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"The staging rollout passed but two",
+				"background jobs still use the old",
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"PgDn ↓ 2 more",
+				...options,
+			],
+			39,
+		),
+	);
+	send("\x1b[6~");
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"schema, and the nightly export reads",
+				"both tables. Which rollout should we",
+				"use so we can deploy today without",
+				"interrupting writes?",
+				"PgUp ↑ 2 more",
+				...options,
+			],
+			39,
+		),
+	);
+	send("X");
+	await pending;
+});
+
+test("at 43x31 with selection paging remapped to j/k, j/k page the question while browsing, PgDn/PgUp page it while editing, and the typed answer keeps every letter", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(
+		31,
+		new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.select.pageUp": "k",
+			"tui.select.pageDown": "j",
+		}),
+	);
+	const pending = tool.execute(
+		"call-narrow-remapped-paging",
+		{
+			question: `${sixLineQuestion} The export job runs at midnight and locks both tables for ten minutes.`,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Gradual rollout", description: "Track errors." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const page = () => {
+		const rows = renderRaw(43).map((line) =>
+			stripTerminalSequences(line).replace(/^│ /, "").replace(/ *│$/, ""),
+		);
+		return [rows[1], rows.find((row) => /^(\S+ )?[↑↓] \d/.test(row))];
+	};
+	const first = "The staging rollout passed but two";
+	const second = "both tables. Which rollout should we";
+	assert.deepEqual(page(), [first, "J ↓ 3 more"]);
+	send("j");
+	assert.deepEqual(page(), [second, "K ↑ 3 more"]);
+	send("k");
+	assert.deepEqual(page(), [first, "J ↓ 3 more"]);
+	send("z");
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	send("\x1b[6~");
+	assert.deepEqual(page(), [
+		"schema, and the nightly export reads",
+		"PgUp ↑ 2 more",
+	]);
+	send("\x1b[5~");
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	for (const char of "keep the export job paused") send(char);
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	send("\r");
+	assert.deepEqual((await pending).details, {
+		status: "answered",
+		kind: "text",
+		text: "keep the export job paused",
+	});
+});
+
+test("at 43x31 with paging remapped to Ctrl+Shift+Left/Right, question pages keep the same boundaries both ways and show whole paging cues within 15 rows", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(
+		31,
+		new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.select.pageUp": "ctrl+shift+left",
+			"tui.select.pageDown": "ctrl+shift+right",
+		}),
+	);
+	const pending = tool.execute(
+		"call-narrow-chord-paging",
+		{
+			question: `${sixLineQuestion} ${sixLineQuestion}`,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const rows = () =>
+		renderRaw(43).map((line) =>
+			stripTerminalSequences(line).replace(/^│ /, "").replace(/ *│$/, ""),
+		);
+	const lines = [
+		"The staging rollout passed but two",
+		"background jobs still use the old",
+		"schema, and the nightly export reads",
+		"both tables. Which rollout should we",
+		"use so we can deploy today without",
+		"interrupting writes? The staging",
+		"rollout passed but two background jobs",
+		"still use the old schema, and the",
+		"nightly export reads both tables. Which",
+		"rollout should we use so we can deploy",
+		"today without interrupting writes?",
+	];
+	const left = "\x1b[1;6D";
+	const right = "\x1b[1;6C";
+	// Each page shows its question lines, its whole cues, then the focused choice.
+	const page = (first, last, cues) => {
+		const shown = rows();
+		assert.ok(shown.length <= 15, `${shown.length} rows`);
+		assert.deepEqual(shown.slice(1, 1 + last - first + 1 + cues.length), [
+			...lines.slice(first - 1, last),
+			...cues,
+		]);
+		assert.ok(shown.includes("▸ 1  Canary"));
+	};
+	const pageOne = () => page(1, 4, ["Ctrl+Shift+Right ↓ 7 more"]);
+	pageOne();
+	send(right);
+	page(5, 8, ["Ctrl+Shift+Left ↑ 4 more", "Ctrl+Shift+Right ↓ 3 more"]);
+	assert.equal(rows().length, 15);
+	send(left);
+	pageOne();
+	send(right);
+	send(right);
+	page(8, 11, ["Ctrl+Shift+Left ↑ 7 more"]);
+	send(left);
+	page(4, 7, ["Ctrl+Shift+Left ↑ 3 more", "Ctrl+Shift+Right ↓ 4 more"]);
+	send(left);
+	pageOne();
+	send("X");
+	await pending;
+});
+
+test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(31);
+	const pending = tool.execute(
+		"call-narrow-wrap",
+		{
+			question: "Which rollout should we use?",
+			options: [
+				{ label: "Gradual rollout", description: "Watch it." },
+				rollout.options[1],
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	assert.deepEqual(
+		renderRaw(43).map((line) => stripTerminalSequences(line)),
+		boxed(
+			[
+				"Which rollout should we use?",
+				"",
+				"▸ 1  Gradual rollout",
+				"     Watch it.",
+				"  2  Full rollout",
+				"     Make the change available to",
+				"     everyone immediately.",
+				"",
+				"  z  Type your answer",
+				"",
+				"↑/↓ move · Enter select",
+				"z edit free text · Esc panel stays open",
+				"Shift+X dismiss",
+			],
+			39,
+		),
+	);
+	send("X");
+	await pending;
+});
+
+test("crossing 60 terminal columns with the panel open keeps the selection and moves the hints between the panel and the footer", async (t) => {
+	const terminal = densityTerminal(t, 59);
+	const hints = createFooterHints();
+	const tool = createAskUserChoiceTool(hints);
+	const { ctx, send, renderRaw } = tuiContext(40);
+	const pending = tool.execute(
+		"call-narrow-cross",
+		rollout,
+		undefined,
+		undefined,
+		ctx,
+	);
+	send(DOWN);
+	const shown = (columns) => {
+		terminal.columns = columns;
+		return renderRaw(columns).map((line) => stripTerminalSequences(line));
+	};
+	const inside = "↑/↓ move · Enter select · z edit free text";
+	const focused = (line) => line.startsWith("│ ▸ 2  Full rollout ");
+	let lines = shown(59);
+	assert.ok(lines.some(focused));
+	assert.ok(lines.some((line) => line.startsWith(`│ ${inside} `)));
+	assert.deepEqual(hints.get(), []);
+	lines = shown(60);
+	assert.ok(
+		lines.some((line) =>
+			line.startsWith(" │ ❯ 2  Full rollout     Make the change available to "),
+		),
+	);
+	assert.ok(!lines.some((line) => line.includes(inside)));
+	assert.deepEqual(hints.get()?.[1], { key: "Enter", action: "select" });
+	lines = shown(59);
+	assert.ok(lines.some(focused));
+	assert.deepEqual(hints.get(), []);
+	send("\r");
+	assert.deepEqual(await pending.then((result) => result.details), {
+		status: "answered",
+		kind: "option",
+		index: 1,
+		label: "Full rollout",
+	});
+	assert.equal(hints.get(), undefined);
+});
+
+test("at 60 and 100 terminal columns the panel renders the base's bytes and publishes the base's footer hints", async (t) => {
+	const terminal = densityTerminal(t, 60);
+	for (const columns of [60, 100]) {
+		terminal.columns = columns;
+		for (const multiple of [false, true]) {
+			const hints = createFooterHints();
+			const tool = createAskUserChoiceTool(hints);
+			const { ctx, send, renderRaw } = tuiContext(31);
+			const original = ctx.ui.custom;
+			ctx.ui.custom = (factory, options) =>
+				original(
+					(tui, _theme, keys, done) => factory(tui, sgrTheme, keys, done),
+					options,
+				);
+			const pending = tool.execute(
+				"call-wide-bytes",
+				{ ...rollout, multiple },
+				undefined,
+				undefined,
+				ctx,
+			);
+			assert.deepEqual(
+				{ lines: renderRaw(columns), hints: hints.get() },
+				wideInput.question[columns][multiple ? "multiple" : "single"],
+			);
+			send("X");
+			await pending;
+		}
 	}
 });
 

@@ -12,18 +12,24 @@ import {
 	type SelectItem,
 	SelectList,
 	type SelectListTheme,
+	truncateToWidth,
 	type TuiMouseEvent,
+	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import {
+	fit,
 	type Hint,
 	hintRows,
 	menuRow,
 	modalFrame,
 	modalMetrics,
+	overlayAtOpen,
 	sectionRule,
+	selectedRow,
 } from "./chrome-menus.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 export type Screen = {
 	title: string;
@@ -34,15 +40,17 @@ export type Screen = {
 
 const VISIBLE_ROWS = 10;
 
-export const pickerOverlay = {
-	overlay: true,
-	overlayOptions: {
-		anchor: "center",
-		width: "70%",
-		minWidth: 44,
-		maxHeight: "100%",
-	},
-} as const;
+export function pickerOverlay() {
+	return {
+		overlay: true,
+		overlayOptions: overlayAtOpen({
+			anchor: "center",
+			width: "70%",
+			minWidth: 44,
+			maxHeight: "100%",
+		}),
+	} as const;
+}
 
 export function modelChoices(
 	registry: Pick<ModelRegistry, "getAvailable" | "getAll">,
@@ -79,6 +87,7 @@ export function createScreenFrame(
 	close: () => void,
 ) {
 	const listTheme = selectListTheme(theme);
+	const narrow = narrowScreen();
 	const stack: Screen[] = [];
 	let notice = "";
 	let visible = VISIBLE_ROWS;
@@ -90,33 +99,40 @@ export function createScreenFrame(
 		else close();
 	};
 
+	// `second`, given only on a narrow screen, puts each item on two lines: the
+	// row, then that text indented under it, ending with … when it cannot fit.
 	function rows(
 		list: SelectList,
 		items: SelectItem[],
 		width: number,
 		chevron?: boolean,
+		second?: (item: SelectItem) => string,
 	): string[] {
 		const selected = Math.max(
 			0,
 			items.findIndex((item) => item.value === list.getSelectedItem()?.value),
 		);
+		const count = second ? Math.max(1, Math.floor(visible / 2)) : visible;
 		const start = Math.max(
 			0,
-			Math.min(selected - Math.floor(visible / 2), items.length - visible),
+			Math.min(selected - Math.floor(count / 2), items.length - count),
 		);
-		const shown = items
-			.slice(start, start + visible)
-			.map((item, i) =>
-				menuRow(
-					theme,
-					item.label,
-					item.description ?? "",
-					start + i === selected,
-					width,
-					chevron,
-				),
+		const shown = items.slice(start, start + count).flatMap((item, i) => {
+			const active = start + i === selected;
+			const row = menuRow(
+				theme,
+				item.label,
+				item.description ?? "",
+				active,
+				width,
+				chevron,
+				narrow,
 			);
-		if (items.length > visible) {
+			if (!second) return [row];
+			const text = `    ${truncateToWidth(second(item), Math.max(0, width - 4), "…")}`;
+			return [row, active ? selectedRow(theme, text, width) : fit(text, width)];
+		});
+		if (items.length > count) {
 			shown.push(theme.fg("dim", `(${selected + 1}/${items.length})`));
 		}
 		return shown;
@@ -138,9 +154,18 @@ export function createScreenFrame(
 		render(width) {
 			frameWidth = width;
 			const screen = stack[stack.length - 1];
-			const inner = Math.max(1, modalMetrics(width).inner);
-			const head = ["", ...(notice ? [theme.fg("warning", notice), ""] : [])];
-			const tail = ["", ...hintRows(theme, screen.hints, inner).lines];
+			const inner = Math.max(1, modalMetrics(width, narrow).inner);
+			const warning = narrow ? wrapTextWithAnsi(notice, inner) : [notice];
+			const head = [
+				"",
+				...(notice
+					? [...warning.map((line) => theme.fg("warning", line)), ""]
+					: []),
+			];
+			const tail = [
+				"",
+				...hintRows(theme, screen.hints, inner, { narrow }).lines,
+			];
 			const room = Math.max(0, terminalRows() - 2);
 			const space = room - head.length - tail.length;
 			visible = Math.max(1, Math.min(VISIBLE_ROWS, space - 3));
@@ -151,6 +176,7 @@ export function createScreenFrame(
 				screen.title,
 				content.slice(Math.max(0, content.length - room)),
 				width,
+				narrow,
 			);
 		},
 		handleMouse(event: TuiMouseEvent) {
@@ -171,6 +197,7 @@ export function createScreenFrame(
 	return {
 		push,
 		pop,
+		narrow,
 		notify: (text: string) => {
 			notice = text;
 		},

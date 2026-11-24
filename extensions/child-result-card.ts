@@ -21,7 +21,7 @@ import {
 import type { ChildDetails, ChildRecord } from "./child-sessions.ts";
 import { markCard } from "./chrome-groups.ts";
 import type { Capability } from "./configure.ts";
-import { assistantInset, edgeFor } from "./chrome-messages.ts";
+import { assistantInset, blockMargin } from "./chrome-messages.ts";
 import {
 	childElapsed,
 	childModelLine,
@@ -30,7 +30,14 @@ import {
 } from "./child-projection.ts";
 import { seated } from "./shell.ts";
 import { terminalSafeBlock, terminalSafeLine } from "./terminal-safe-text.ts";
-import { spread } from "./visual-language.ts";
+import {
+	affordance,
+	legacyDurationWidth,
+	narrowScreen,
+	pinRight,
+	runStateMark,
+	spread,
+} from "./visual-language.ts";
 
 const RESULT_TYPE = "pi-workflow-child-result";
 const QUESTION_TYPE = "pi-workflow-child-question";
@@ -56,6 +63,17 @@ function tone(card: Card, question: boolean): ThemeColor {
 	return "toolTitle";
 }
 
+// Narrow, an ended card's glyph and state word take the shared scale's tone.
+function paintTone(theme: Theme, card: Card, question: boolean, text: string) {
+	const state = question ? undefined : card.state;
+	if (
+		narrowScreen() &&
+		(state === "failed" || state === "timed out" || state === "cancelled")
+	)
+		return runStateMark(state).paint(theme, text);
+	return theme.fg(tone(card, question), text);
+}
+
 function verdictTone(verdict: string): ThemeColor {
 	if (verdict === "fail") return "error";
 	if (verdict === "blocked" || verdict === "partial") return "warning";
@@ -72,28 +90,78 @@ function reason(card: Card) {
 	return card.result?.reason;
 }
 
-function header(theme: Theme, card: Card, question: boolean, open: boolean) {
-	const name = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
-	let line = `${theme.fg(tone(card, question), "◆")} ${theme.bold(theme.fg("muted", "Subagent"))} ${name}`;
+function header(
+	theme: Theme,
+	card: Card,
+	question: boolean,
+	open: boolean,
+	width = Number.POSITIVE_INFINITY,
+) {
+	const glyph = paintTone(theme, card, question, "◆");
+	const label = (text: string) => theme.bold(theme.fg("muted", text));
+	let rest = [card.role, card.id.slice(0, 4)].filter(Boolean).join(" ");
 	if (question)
-		return `${line} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
+		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
-		line += ` ${theme.fg(tone(card, question), card.state)}`;
+		rest += ` ${paintTone(theme, card, question, card.state)}`;
+	// Narrow, a collapsed completed card without a Verdict still reads its state (owner, #417).
+	else if (
+		card.state === "completed" &&
+		!card.verdict &&
+		!open &&
+		narrowScreen()
+	)
+		rest += ` ${runStateMark("completed").paint(theme, "completed")}`;
 	if (card.verdict)
-		line += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
-	const meta = [
+		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
+	const line = `${glyph} ${label("Subagent")} ${rest}`;
+	const model =
 		open &&
-			card.model &&
-			childModelLine({
-				model: card.model,
-				thinking: card.thinking,
-			}),
+		card.model &&
+		childModelLine({
+			model: card.model,
+			thinking: card.thinking,
+		});
+	const time =
 		card.elapsedMs !== undefined &&
-			childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0),
-	].filter(Boolean);
-	return meta.length > 0
-		? `${line}  ${theme.fg("dim", meta.join(" · "))}`
-		: line;
+		childElapsed({ createdAt: 0, endedAt: card.elapsedMs } as ChildRecord, 0);
+	const meta = [model, time].filter(Boolean).join(" · ");
+	if (!meta) return line;
+	const full = `${line}  ${theme.fg("dim", meta)}`;
+	if (!time || visibleWidth(full) <= width) return full;
+	// Wide rows keep the base's layout unless the base's whole seconds fit where the new time does not.
+	const legacy =
+		visibleWidth(full) -
+		visibleWidth(time) +
+		legacyDurationWidth(card.elapsedMs ?? 0);
+	if (!narrowScreen() && legacy > width) return full;
+	// Overflow keeps the whole time: one space before the metadata, then a shorter model, then none,
+	// then a shorter Subagent label, then none; the role, id and state stay whole.
+	const cut = narrowScreen() ? "…" : "...";
+	const dim = (text: string) => theme.fg("dim", text);
+	const tight = `${line} ${dim(meta)}`;
+	if (visibleWidth(tight) <= width) return tight;
+	const room = width - visibleWidth(line) - 1 - visibleWidth(` · ${time}`);
+	const short = model && room > 1 && truncateToWidth(model, room, cut);
+	if (short) return `${line} ${dim(`${short} · ${time}`)}`;
+	const timed = `${line} ${dim(time)}`;
+	const labelRoom = width - visibleWidth(`${glyph}  ${rest} ${time}`);
+	if (visibleWidth(timed) <= width) return timed;
+	if (labelRoom <= visibleWidth(cut)) {
+		// No readable label fits: drop Subagent and its space before clipping the time.
+		const bare = `${glyph} ${rest} ${dim(time)}`;
+		return visibleWidth(bare) <= width ? bare : timed;
+	}
+	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
+}
+
+// Narrow, the reason takes up to 2 lines, the second cut with … (NS-21); wide keeps one.
+function reasonLines(why: string, inner: number, narrow: boolean) {
+	if (!narrow) return [why];
+	const [first = "", ...rest] = wrapTextWithAnsi(why, inner);
+	return rest.length === 0
+		? [first]
+		: [first, truncateToWidth(rest.join(" "), inner, "…")];
 }
 
 export function clean(text: string) {
@@ -157,21 +225,37 @@ export function frame(
 	hint: string | ((inner: number) => string),
 	content: (inner: number, unplacedHint: string) => string[],
 	inset = assistantInset,
+	pinned = false,
 ) {
-	const edge = edgeFor(inset, outer);
-	const width = Math.max(1, outer - edge * 2);
+	const { left, width: room } = blockMargin(
+		inset,
+		outer,
+		inset === 0 ? 0 : undefined,
+	);
+	const width = Math.max(1, room);
 	const inner = Math.max(1, width - indent);
 	const top = typeof head === "string" ? head : head(width);
 	const tail = typeof hint === "string" ? hint : hint(inner);
-	const placed = tail && visibleWidth(top) + visibleWidth(tail) + 2 <= width;
-	const margin = " ".repeat(edge);
+	const placed =
+		tail && (pinned || visibleWidth(top) + visibleWidth(tail) + 2 <= width);
+	const narrow = narrowScreen();
+	const ellipsis = narrow ? "…" : "...";
+	const margin = " ".repeat(left);
 	const pad = " ".repeat(indent);
-	return [
-		margin + (placed ? spread(top, tail, width) : truncateToWidth(top, width)),
+	const lines = [
+		margin +
+			(pinned && tail
+				? pinRight(top, tail, width)
+				: placed
+					? spread(top, tail, width)
+					: truncateToWidth(top, width, ellipsis)),
 		...content(inner, placed ? "" : tail).map(
-			(line) => margin + pad + truncateToWidth(line, inner),
+			(line) => margin + pad + truncateToWidth(line, inner, ellipsis),
 		),
 	];
+	return narrow
+		? lines.map((line) => truncateToWidth(line, room, ellipsis))
+		: lines;
 }
 
 class ResultCard implements Component {
@@ -229,27 +313,43 @@ class ResultCard implements Component {
 
 	cardLines(outer: number) {
 		const t = this.theme;
-		const hint = expandHint(t, this.expanded);
 		const open = this.open();
+		const narrow = narrowScreen();
+		const pinned = !open && narrow;
+		const hint = pinned ? affordance(t) : expandHint(t, this.expanded);
+		const instruction = (text: string, inner: number) =>
+			narrow ? wrapTextWithAnsi(t.fg("dim", text), inner) : [t.fg("dim", text)];
 		return frame(
 			outer,
-			header(t, this.card, this.question, open),
+			// A pinned › takes the row's last cell and the space before it.
+			(width) =>
+				header(t, this.card, this.question, open, pinned ? width - 2 : width),
 			hint,
 			(inner) => {
 				const lines: string[] = [];
 				if (open && this.card.task)
-					lines.push(t.fg("dim", `Task ${terminalSafeLine(this.card.task)}`));
+					lines.push(
+						...instruction(`Task ${terminalSafeLine(this.card.task)}`, inner),
+					);
 				if (open && this.card.result)
 					for (const line of resultFieldLines(this.card.result))
 						lines.push(t.fg("dim", terminalSafeLine(line)));
 				if (open || this.question) lines.push(...bodyLines(this.body, inner));
 				else {
 					const why = reason(this.card);
-					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
+					if (why)
+						lines.push(
+							...reasonLines(terminalSafeLine(why), inner, narrow).map((line) =>
+								t.fg("dim", line),
+							),
+						);
 				}
-				if (open) lines.push(t.fg("dim", "alt+a  open in subagents view"));
+				if (open)
+					lines.push(...instruction("alt+a  open in subagents view", inner));
 				return lines;
 			},
+			assistantInset,
+			pinned,
 		);
 	}
 
