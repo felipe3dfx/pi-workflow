@@ -117,10 +117,21 @@ async function askPanel(
 				let questionTop = 0;
 				let questionPage = 0;
 				let questionLast = 0;
-				const pageKey = (
-					binding: "tui.select.pageUp" | "tui.select.pageDown",
-				) => {
-					const key = keybindings.getKeys(binding)[0];
+				// One mode-specific mapping names and matches the question paging keys:
+				// the configured selection keys while browsing, only PgUp/PgDn while
+				// editing, so printable and editing keys always reach the answer.
+				const pageKeys = (direction: "up" | "down") =>
+					mode === "edit"
+						? [direction === "up" ? Key.pageUp : Key.pageDown]
+						: keybindings.getKeys(
+								direction === "up"
+									? "tui.select.pageUp"
+									: "tui.select.pageDown",
+							);
+				const pageKeyMatches = (data: string, direction: "up" | "down") =>
+					pageKeys(direction).some((key) => matchesKey(data, key));
+				const pageKey = (direction: "up" | "down") => {
+					const key = pageKeys(direction)[0];
 					if (!key) return "";
 					const named = key
 						.split("+")
@@ -408,11 +419,9 @@ async function askPanel(
 								questionTop = Math.min(Math.max(0, questionTop), questionLast);
 								const end = questionTop + questionPage;
 								const cue = [
-									questionTop > 0
-										? `${pageKey("tui.select.pageUp")}↑ ${questionTop}`
-										: "",
+									questionTop > 0 ? `${pageKey("up")}↑ ${questionTop}` : "",
 									end < questionLines.length
-										? `${pageKey("tui.select.pageDown")}↓ ${questionLines.length - end}`
+										? `${pageKey("down")}↓ ${questionLines.length - end}`
 										: "",
 								].filter(Boolean);
 								return [
@@ -575,11 +584,8 @@ async function askPanel(
 					},
 					invalidate() {},
 					handleInput(data: string) {
-						const pageUp = keybindings.matches(data, "tui.select.pageUp");
-						if (
-							questionPage > 0 &&
-							(pageUp || keybindings.matches(data, "tui.select.pageDown"))
-						) {
+						const pageUp = pageKeyMatches(data, "up");
+						if (questionPage > 0 && (pageUp || pageKeyMatches(data, "down"))) {
 							questionTop = Math.min(
 								Math.max(0, questionTop + (pageUp ? -1 : 1) * questionPage),
 								questionLast,

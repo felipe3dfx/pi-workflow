@@ -58,7 +58,7 @@ const UP = "\x1b[A";
 const DOWN = "\x1b[B";
 const SPACE = " ";
 
-function tuiContext(rows = 40) {
+function tuiContext(rows = 40, keybindings = fakeKeybindings) {
 	let component;
 	const host = { terminal: { rows } };
 	let resolveDone;
@@ -72,7 +72,7 @@ function tuiContext(rows = 40) {
 		ui: {
 			custom: (factory, options) => {
 				customOptions = options;
-				component = factory(host, fakeTheme, fakeKeybindings, (result) =>
+				component = factory(host, fakeTheme, keybindings, (result) =>
 					resolveDone(result),
 				);
 				return donePromise;
@@ -2166,6 +2166,63 @@ test("at 43x31 a six-line question pages with PageDown so the focused descriptio
 	);
 	send("X");
 	await pending;
+});
+
+test("at 43x31 with selection paging remapped to j/k, j/k page the question while browsing, PgDn/PgUp page it while editing, and the typed answer keeps every letter", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(
+		31,
+		new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.select.pageUp": "k",
+			"tui.select.pageDown": "j",
+		}),
+	);
+	const pending = tool.execute(
+		"call-narrow-remapped-paging",
+		{
+			question: `${sixLineQuestion} The export job runs at midnight and locks both tables for ten minutes.`,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Gradual rollout", description: "Track errors." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	// The first question row and the dim cue below the question page.
+	const page = () => {
+		const rows = renderRaw(43).map((line) =>
+			stripTerminalSequences(line).replace(/^│ /, "").replace(/ *│$/, ""),
+		);
+		return [rows[1], rows.find((row) => /^(\S+ )?[↑↓] \d/.test(row))];
+	};
+	const first = "The staging rollout passed but two";
+	const second = "both tables. Which rollout should we";
+	assert.deepEqual(page(), [first, "J ↓ 3 more"]);
+	send("j");
+	assert.deepEqual(page(), [second, "K ↑ 3 more"]);
+	send("k");
+	assert.deepEqual(page(), [first, "J ↓ 3 more"]);
+	send("z");
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	send("\x1b[6~");
+	assert.deepEqual(page(), [
+		"schema, and the nightly export reads",
+		"PgUp ↑ 2 more",
+	]);
+	send("\x1b[5~");
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	for (const char of "keep the export job paused") send(char);
+	assert.deepEqual(page(), [first, "PgDn ↓ 2 more"]);
+	send("\r");
+	assert.deepEqual((await pending).details, {
+		status: "answered",
+		kind: "text",
+		text: "keep the export job paused",
+	});
 });
 
 test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
