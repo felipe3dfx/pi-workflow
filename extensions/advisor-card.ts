@@ -109,7 +109,10 @@ class AdvisorCard implements Component {
 			stopped: "dim",
 			refused: "dim",
 		};
-		if (this.phase === "running") return running(text, this.theme);
+		if (this.phase === "running")
+			return narrowScreen()
+				? runStateMark("running").paint(this.theme, text)
+				: running(text, this.theme);
 		if (this.phase === "stopped" && narrowScreen())
 			return runStateMark("cancelled").paint(this.theme, text);
 		return this.theme.fg(tones[this.phase], text);

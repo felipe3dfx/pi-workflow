@@ -499,6 +499,18 @@ test("below 60 terminal columns the advisor glyph is ◆ in its phase tone, acce
 		const head = card(steps).render(43)[1];
 		assert.ok(head.startsWith(glyph), JSON.stringify(head));
 	}
+	const truecolor = theme();
+	globalThis[themeKey] = loadThemeFromPath(
+		new URL("../themes/pi-workflow.json", import.meta.url).pathname,
+		"256color",
+	);
+	const runningHead = card({ partial: model }).render(43)[1];
+	assert.ok(
+		runningHead.startsWith(theme().fg("accent", "◆")),
+		JSON.stringify(runningHead),
+	);
+	assert.notEqual(theme().fg("accent", "◆"), theme().fg("dim", "◆"));
+	globalThis[themeKey] = truecolor;
 	assert.equal(plain(card(done(advice, 12_000)), 43)[1], narrowHead);
 	const finished = card(done(advice, 12_000));
 	terminal.columns = 60;
