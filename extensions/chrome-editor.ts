@@ -19,8 +19,10 @@ import {
 import type { ChromeTheme } from "./chrome.ts";
 import { transcriptCursor } from "./chrome-groups.ts";
 import { NATIVE } from "./chrome-menus.ts";
+import { narrowScreen } from "./visual-language.ts";
 
 export const PLACEHOLDER = "What should we build together?";
+const NARROW_PLACEHOLDER = "What should we build?";
 
 const TOP = "\u0000chrome-top";
 const BOTTOM = "\u0000chrome-bottom";
@@ -37,6 +39,11 @@ const marginMinWidth = 16;
 
 export function marginFor(width: number) {
 	return width >= marginMinWidth ? margin : 0;
+}
+
+// Narrow input surfaces touch the edge (NS-10); the header keeps `marginFor` (S-03).
+export function inputMargin(width: number) {
+	return narrowScreen() ? 0 : marginFor(width);
 }
 
 export interface ChromeEditorOptions {
@@ -209,7 +216,7 @@ class ChromeEditor extends CustomEditor {
 	}
 
 	render(full: number): string[] {
-		const edge = marginFor(full);
+		const edge = inputMargin(full);
 		const width = full - edge * 2;
 		const inner = width - inset - 1;
 		const pad = this.getPaddingX();
@@ -230,7 +237,13 @@ class ChromeEditor extends CustomEditor {
 		const body = lines.slice(1, bottom).map((line, row) => {
 			const shown =
 				empty && row === 0
-					? withPlaceholder(line, theme.fg("dim", PLACEHOLDER))
+					? withPlaceholder(
+							line,
+							theme.fg(
+								"dim",
+								narrowScreen() ? NARROW_PLACEHOLDER : PLACEHOLDER,
+							),
+						)
 					: row === 0
 						? this.slashLine(line, theme, inner)
 						: line;
@@ -305,7 +318,7 @@ class ChromeEditor extends CustomEditor {
 		const inMenu = event.y < this.menuRows;
 		if (inMenu && (event.y === 0 || event.y === this.menuRows - 1))
 			return undefined;
-		const edge = marginFor(event.width);
+		const edge = inputMargin(event.width);
 		return super.handleMouse({
 			...event,
 			x: event.x - edge - inset,

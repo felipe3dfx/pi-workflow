@@ -1,0 +1,202 @@
+{
+  "footer": {
+    "60": {
+      "idle": [
+        " \u001b[1m\u001b[38;5;21mShift+Tab\u001b[39m\u001b[22m\u001b[38;5;19m:thinking\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+P\u001b[39m\u001b[22m\u001b[38;5;19m:model\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+O\u001b[39m\u001b[22m\u001b[38;5;19m:expand\u001b[39m"
+      ],
+      "working": [
+        " \u001b[1m\u001b[38;5;21mEsc\u001b[39m\u001b[22m\u001b[38;5;19m:interrupt\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mEnter\u001b[39m\u001b[22m\u001b[38;5;19m:steer\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mAlt+Enter\u001b[39m\u001b[22m\u001b[38;5;19m:follow-up\u001b[39m"
+      ]
+    },
+    "100": {
+      "idle": [
+        " \u001b[1m\u001b[38;5;21mShift+Tab\u001b[39m\u001b[22m\u001b[38;5;19m:thinking\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+P\u001b[39m\u001b[22m\u001b[38;5;19m:model\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+O\u001b[39m\u001b[22m\u001b[38;5;19m:expand\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+C\u001b[39m\u001b[22m\u001b[38;5;19m:clear\u001b[39m           \u001b[38;5;19mbuild ok\u001b[39m  \u001b[38;5;19mlsp: ts\u001b[39m"
+      ],
+      "working": [
+        " \u001b[1m\u001b[38;5;21mEsc\u001b[39m\u001b[22m\u001b[38;5;19m:interrupt\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mEnter\u001b[39m\u001b[22m\u001b[38;5;19m:steer\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mAlt+Enter\u001b[39m\u001b[22m\u001b[38;5;19m:follow-up\u001b[39m\u001b[38;5;18m  │  \u001b[39m\u001b[1m\u001b[38;5;21mCtrl+O\u001b[39m\u001b[22m\u001b[38;5;19m:expand\u001b[39m"
+      ]
+    }
+  },
+  "editor": {
+    "60": {
+      "empty": [
+        " \u001b[38;5;17m╭\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m────────────────────────────────────────────────────────╮\u001b[39m",
+        " \u001b[38;5;17m│\u001b[39m \u001b[38;5;21m❯\u001b[39m \u001b[38;5;21m\u001b_pi:fc\u0007 \u001b_pi:/fc\u0007\u001b[38;5;19mWhat should we build together?\u001b[39m\u001b[38;5;21m\u001b[39m                      \u001b[38;5;17m│\u001b[39m",
+        " \u001b[38;5;17m╰\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m───────────────────────────────\u001b[39m \u001b[38;5;22mclaude-opus-5-5\u001b[39m\u001b[38;5;19m (high)\u001b[39m \u001b[38;5;17m─╯\u001b[39m"
+      ],
+      "typed": [
+        " \u001b[38;5;17m╭\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m────────────────────────────────────────────────────────╮\u001b[39m",
+        " \u001b[38;5;17m│\u001b[39m \u001b[38;5;21m❯\u001b[39m \u001b[38;5;21mhello world\u001b_pi:fc\u0007 \u001b_pi:/fc\u0007                                         \u001b[39m\u001b[38;5;17m│\u001b[39m",
+        " \u001b[38;5;17m╰\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m───────────────────────────────\u001b[39m \u001b[38;5;22mclaude-opus-5-5\u001b[39m\u001b[38;5;19m (high)\u001b[39m \u001b[38;5;17m─╯\u001b[39m"
+      ]
+    },
+    "100": {
+      "empty": [
+        " \u001b[38;5;17m╭\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m────────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[39m",
+        " \u001b[38;5;17m│\u001b[39m \u001b[38;5;21m❯\u001b[39m \u001b[38;5;21m\u001b_pi:fc\u0007 \u001b_pi:/fc\u0007\u001b[38;5;19mWhat should we build together?\u001b[39m\u001b[38;5;21m\u001b[39m                                                              \u001b[38;5;17m│\u001b[39m",
+        " \u001b[38;5;17m╰\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m───────────────────────────────────────────────────────────────────────\u001b[39m \u001b[38;5;22mclaude-opus-5-5\u001b[39m\u001b[38;5;19m (high)\u001b[39m \u001b[38;5;17m─╯\u001b[39m"
+      ],
+      "typed": [
+        " \u001b[38;5;17m╭\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m────────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[39m",
+        " \u001b[38;5;17m│\u001b[39m \u001b[38;5;21m❯\u001b[39m \u001b[38;5;21mhello world\u001b_pi:fc\u0007 \u001b_pi:/fc\u0007                                                                                 \u001b[39m\u001b[38;5;17m│\u001b[39m",
+        " \u001b[38;5;17m╰\u001b[39m\u001b[38;5;19m\u001b[39m\u001b[38;5;17m───────────────────────────────────────────────────────────────────────\u001b[39m \u001b[38;5;22mclaude-opus-5-5\u001b[39m\u001b[38;5;19m (high)\u001b[39m \u001b[38;5;17m─╯\u001b[39m"
+      ]
+    }
+  },
+  "question": {
+    "60": {
+      "single": {
+        "lines": [
+          " \u001b[38;5;18m╭────────────────────────────────────────────────────────╮\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21mWhich rollout should we use?\u001b[39m\u001b[22m                           \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                        \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21m❯ \u001b[39m\u001b[22m\u001b[1m\u001b[38;5;21m1\u001b[39m\u001b[22m  \u001b[1m\u001b[38;5;21mGradual rollout\u001b[39m\u001b[22m  \u001b[38;5;19mStart with a small test group\u001b[39m    \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m      \u001b[1m\u001b[38;5;21m               \u001b[39m\u001b[22m  \u001b[38;5;19mand monitor results.\u001b[39m             \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20m2\u001b[39m  \u001b[38;5;21mFull rollout   \u001b[39m  \u001b[38;5;19mMake the change available to ev\u001b[0m…\u001b[0m\u001b[39m \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20m3\u001b[39m  \u001b[38;5;21mWait           \u001b[39m                                   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                        \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20mz\u001b[39m  \u001b[38;5;19mType your answer\u001b[39m                                  \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m╰─────────────────────────────────────────────\u001b[39m\u001b[38;5;19m question \u001b[39m\u001b[38;5;18m─╯\u001b[39m"
+        ],
+        "hints": [
+          {
+            "key": "↑/↓",
+            "action": "move"
+          },
+          {
+            "key": "Enter",
+            "action": "select"
+          },
+          {
+            "key": "z",
+            "action": "edit free text"
+          },
+          {
+            "key": "Esc",
+            "action": "panel stays open"
+          },
+          {
+            "key": "Shift+X",
+            "action": "dismiss"
+          }
+        ]
+      },
+      "multiple": {
+        "lines": [
+          " \u001b[38;5;18m╭────────────────────────────────────────────────────────╮\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21mWhich rollout should we use?\u001b[39m\u001b[22m                           \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                        \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21m❯ \u001b[39m\u001b[22m\u001b[38;5;19m[ ] \u001b[39m\u001b[1m\u001b[38;5;21m1\u001b[39m\u001b[22m  \u001b[1m\u001b[38;5;21mGradual rollout\u001b[39m\u001b[22m  \u001b[38;5;19mStart with a small test\u001b[39m      \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m          \u001b[1m\u001b[38;5;21m               \u001b[39m\u001b[22m  \u001b[38;5;19mgroup and monitor results.\u001b[39m   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;19m[ ] \u001b[39m\u001b[38;5;20m2\u001b[39m  \u001b[38;5;21mFull rollout   \u001b[39m  \u001b[38;5;19mMake the change available t\u001b[0m…\u001b[0m\u001b[39m \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;19m[ ] \u001b[39m\u001b[38;5;20m3\u001b[39m  \u001b[38;5;21mWait           \u001b[39m                               \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                        \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m       \u001b[38;5;20mz\u001b[39m  \u001b[38;5;19mType your answer\u001b[39m                              \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m╰─────────────────────────────────────────────\u001b[39m\u001b[38;5;19m question \u001b[39m\u001b[38;5;18m─╯\u001b[39m"
+        ],
+        "hints": [
+          {
+            "key": "↑/↓",
+            "action": "move"
+          },
+          {
+            "key": "Space",
+            "action": "mark"
+          },
+          {
+            "key": "Enter",
+            "action": "select at least one"
+          },
+          {
+            "key": "z",
+            "action": "edit free text"
+          },
+          {
+            "key": "Esc",
+            "action": "panel stays open"
+          },
+          {
+            "key": "Shift+X",
+            "action": "dismiss"
+          }
+        ]
+      }
+    },
+    "100": {
+      "single": {
+        "lines": [
+          " \u001b[38;5;18m╭────────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21mWhich rollout should we use?\u001b[39m\u001b[22m                                                                   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                                                                \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21m❯ \u001b[39m\u001b[22m\u001b[1m\u001b[38;5;21m1\u001b[39m\u001b[22m  \u001b[1m\u001b[38;5;21mGradual rollout\u001b[39m\u001b[22m  \u001b[38;5;19mStart with a small test group and monitor results.\u001b[39m                       \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20m2\u001b[39m  \u001b[38;5;21mFull rollout   \u001b[39m  \u001b[38;5;19mMake the change available to everyone immediately.\u001b[39m                       \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20m3\u001b[39m  \u001b[38;5;21mWait           \u001b[39m                                                                           \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                                                                \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;20mz\u001b[39m  \u001b[38;5;19mType your answer\u001b[39m                                                                          \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m╰─────────────────────────────────────────────────────────────────────────────────────\u001b[39m\u001b[38;5;19m question \u001b[39m\u001b[38;5;18m─╯\u001b[39m"
+        ],
+        "hints": [
+          {
+            "key": "↑/↓",
+            "action": "move"
+          },
+          {
+            "key": "Enter",
+            "action": "select"
+          },
+          {
+            "key": "z",
+            "action": "edit free text"
+          },
+          {
+            "key": "Esc",
+            "action": "panel stays open"
+          },
+          {
+            "key": "Shift+X",
+            "action": "dismiss"
+          }
+        ]
+      },
+      "multiple": {
+        "lines": [
+          " \u001b[38;5;18m╭────────────────────────────────────────────────────────────────────────────────────────────────╮\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21mWhich rollout should we use?\u001b[39m\u001b[22m                                                                   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                                                                \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m \u001b[1m\u001b[38;5;21m❯ \u001b[39m\u001b[22m\u001b[38;5;19m[ ] \u001b[39m\u001b[1m\u001b[38;5;21m1\u001b[39m\u001b[22m  \u001b[1m\u001b[38;5;21mGradual rollout\u001b[39m\u001b[22m  \u001b[38;5;19mStart with a small test group and monitor results.\u001b[39m                   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;19m[ ] \u001b[39m\u001b[38;5;20m2\u001b[39m  \u001b[38;5;21mFull rollout   \u001b[39m  \u001b[38;5;19mMake the change available to everyone immediately.\u001b[39m                   \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m   \u001b[38;5;19m[ ] \u001b[39m\u001b[38;5;20m3\u001b[39m  \u001b[38;5;21mWait           \u001b[39m                                                                       \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m                                                                                                \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m│\u001b[39m       \u001b[38;5;20mz\u001b[39m  \u001b[38;5;19mType your answer\u001b[39m                                                                      \u001b[38;5;18m│\u001b[39m",
+          " \u001b[38;5;18m╰─────────────────────────────────────────────────────────────────────────────────────\u001b[39m\u001b[38;5;19m question \u001b[39m\u001b[38;5;18m─╯\u001b[39m"
+        ],
+        "hints": [
+          {
+            "key": "↑/↓",
+            "action": "move"
+          },
+          {
+            "key": "Space",
+            "action": "mark"
+          },
+          {
+            "key": "Enter",
+            "action": "select at least one"
+          },
+          {
+            "key": "z",
+            "action": "edit free text"
+          },
+          {
+            "key": "Esc",
+            "action": "panel stays open"
+          },
+          {
+            "key": "Shift+X",
+            "action": "dismiss"
+          }
+        ]
+      }
+    }
+  }
+}

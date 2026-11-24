@@ -17,8 +17,8 @@ import {
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import type { FooterHints } from "./chrome.ts";
-import { marginFor } from "./chrome-editor.ts";
+import { type FooterHints, type Hint, keyHintRows } from "./chrome.ts";
+import { inputMargin } from "./chrome-editor.ts";
 import { hidden } from "./compact-tools.ts";
 import { seated } from "./shell.ts";
 import { closeChildrenView } from "./children-view.ts";
@@ -113,6 +113,38 @@ async function askPanel(
 				const marked = new Set<number>();
 				let index = 0;
 				let mode: "browse" | "edit" = options.length === 0 ? "edit" : "browse";
+				// Narrow, a question bounded below half the height pages by its visible lines.
+				let questionTop = 0;
+				let questionPage = 0;
+				let questionLast = 0;
+				// One mode-specific mapping names and matches the question paging keys:
+				// the configured selection keys while browsing, only PgUp/PgDn while
+				// editing, so printable and editing keys always reach the answer.
+				const pageKeys = (direction: "up" | "down") =>
+					mode === "edit"
+						? [direction === "up" ? Key.pageUp : Key.pageDown]
+						: keybindings.getKeys(
+								direction === "up"
+									? "tui.select.pageUp"
+									: "tui.select.pageDown",
+							);
+				const pageKeyMatches = (data: string, direction: "up" | "down") =>
+					pageKeys(direction).some((key) => matchesKey(data, key));
+				const pageKey = (direction: "up" | "down") => {
+					const key = pageKeys(direction)[0];
+					if (!key) return "";
+					const named = key
+						.split("+")
+						.map((part) =>
+							part === "pageUp"
+								? "PgUp"
+								: part === "pageDown"
+									? "PgDn"
+									: part.charAt(0).toUpperCase() + part.slice(1),
+						)
+						.join("+");
+					return `${named} `;
+				};
 
 				const isFreeTextRow = (i: number) => i === freeTextIndex;
 
@@ -163,9 +195,44 @@ async function askPanel(
 					});
 				};
 
+				const panelHints = (): Hint[] => {
+					const hasAnyMarked = marked.size > 0;
+					const enterHint = isFreeTextRow(index)
+						? "Enter:edit free text"
+						: `Enter:${multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "select"}`;
+					const browseHintParts = ["↑/↓:move"];
+					if (multiple) browseHintParts.push("Space:mark");
+					browseHintParts.push(enterHint);
+					browseHintParts.push(
+						"z:edit free text",
+						"Esc:panel stays open",
+						"Shift+X:dismiss",
+					);
+					const editEnterHint = multiple
+						? hasAnyMarked
+							? "submit marked"
+							: "select at least one"
+						: "submit";
+					const hintParts =
+						mode === "edit"
+							? [
+									`Enter:${editEnterHint}`,
+									"↑/↓:leave & move",
+									"Esc:back to browse",
+								]
+							: browseHintParts;
+					return hintParts.map((part) => {
+						const split = part.indexOf(":");
+						return { key: part.slice(0, split), action: part.slice(split + 1) };
+					});
+				};
+
 				const component: Component = {
 					render(width) {
-						const edge = marginFor(width);
+						// Below 60 columns ADR 0031 amends the look and the hints; ADR 0019 keeps the rest.
+						const narrow = narrowScreen();
+						questionPage = 0;
+						const edge = inputMargin(width);
 						const frameWidth = width - edge * 2;
 						const framed = frameWidth >= minFrame;
 						const contentWidth = Math.max(
@@ -185,36 +252,88 @@ async function askPanel(
 						const numberWidth = String(Math.max(options.length, 1)).length;
 						const markWidth = multiple ? 4 : 0;
 						const prefixWidth = 2 + markWidth + numberWidth + 2;
-						const pointer = (active: boolean) => (active ? strong("❯ ") : "  ");
+						const pointer = (active: boolean) =>
+							active ? strong(narrow ? "▸ " : "❯ ") : "  ";
 						const labels = options.map((option) =>
 							normalizeSingleLine(option.label),
 						);
 						const labelRoom = Math.max(0, contentWidth - prefixWidth);
-						const labelWidth = Math.min(
-							Math.max(0, ...labels.map((label) => visibleWidth(label))),
-							options.some((option) => option.description)
-								? Math.floor(0.45 * labelRoom)
-								: labelRoom,
-						);
-						const descriptionWidth =
-							contentWidth - prefixWidth - labelWidth - 2;
-						let wrapped: [string[], string[]] | undefined;
-						const optionRows = (
-							i: number,
-							limit = Number.POSITIVE_INFINITY,
-						) => {
-							const active = i === index;
-							const description = options[i].description
+						const labelWidth = narrow
+							? labelRoom
+							: Math.min(
+									Math.max(0, ...labels.map((label) => visibleWidth(label))),
+									options.some((option) => option.description)
+										? Math.floor(0.45 * labelRoom)
+										: labelRoom,
+								);
+						// Narrow descriptions sit below their label, across the label's room.
+						const descriptionWidth = narrow
+							? labelRoom
+							: contentWidth - prefixWidth - labelWidth - 2;
+						const descriptionOf = (i: number) =>
+							options[i].description
 								? normalizeSingleLine(options[i].description)
 								: "";
+						const described = (i: number) =>
+							Boolean(descriptionOf(i)) && descriptionWidth >= 4;
+						const indent = " ".repeat(prefixWidth);
+						const cut = (lines: string[], width: number, limit: number) =>
+							lines.length > limit
+								? [
+										...lines.slice(0, limit - 1),
+										truncateToWidth(`${lines[limit - 1]}…`, width, "…"),
+									]
+								: lines;
+						let wrapped: [string[], string[]] | undefined;
+						const headOf = (i: number) => {
+							const active = i === index;
 							const mark = multiple
 								? marked.has(i)
 									? strong("[x] ")
 									: theme.fg("dim", "[ ] ")
 								: "";
 							const number = String(i + 1).padStart(numberWidth);
-							const head = `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
-							const shown = description && descriptionWidth >= 4;
+							return `${pointer(active)}${mark}${active ? strong(number) : theme.fg("muted", number)}  `;
+						};
+						// Narrow, an option is its label lines over its description lines.
+						const stack = (i: number) => ({
+							label:
+								i === index && labelWidth >= minLabel
+									? wrapTextWithAnsi(labels[i], labelWidth)
+									: [truncateToWidth(labels[i], labelWidth, "…")],
+							below: described(i)
+								? wrapTextWithAnsi(descriptionOf(i), descriptionWidth)
+								: [],
+						});
+						const stackRows = (i: number, limit: number) => {
+							const { label, below } = stack(i);
+							const keep = Math.max(
+								1,
+								Math.min(label.length, limit - Math.min(below.length, 1)),
+							);
+							const room = Math.min(below.length, Math.max(0, limit - keep));
+							const style = (text: string) =>
+								i === index ? strong(text) : theme.fg("text", text);
+							return [
+								...cut(label, labelWidth, keep).map(
+									(line, k) => `${k === 0 ? headOf(i) : indent}${style(line)}`,
+								),
+								...(room === 0
+									? []
+									: room === 1 && below.length > 1
+										? [truncateToWidth(descriptionOf(i), descriptionWidth, "…")]
+										: cut(below, descriptionWidth, room)
+								).map((line) => `${indent}${theme.fg("dim", line)}`),
+							];
+						};
+						const optionRows = (
+							i: number,
+							limit = Number.POSITIVE_INFINITY,
+						) => {
+							const active = i === index;
+							const description = descriptionOf(i);
+							const head = headOf(i);
+							const shown = described(i);
 							if (!active || labelWidth < minLabel || limit < 2) {
 								const label = truncateToWidth(labels[i], labelWidth, "…", true);
 								const tail = shown
@@ -224,19 +343,12 @@ async function askPanel(
 									`${head}${active ? strong(label) : theme.fg("text", label)}${tail}`,
 								];
 							}
-							const cut = (lines: string[], width: number) =>
-								lines.length > limit
-									? [
-											...lines.slice(0, limit - 1),
-											truncateToWidth(`${lines[limit - 1]}…`, width, "…"),
-										]
-									: lines;
 							wrapped ??= [
 								wrapTextWithAnsi(labels[i], labelWidth),
 								shown ? wrapTextWithAnsi(description, descriptionWidth) : [],
 							];
-							const labelLines = cut(wrapped[0], labelWidth);
-							const descriptionLines = cut(wrapped[1], descriptionWidth);
+							const labelLines = cut(wrapped[0], labelWidth, limit);
+							const descriptionLines = cut(wrapped[1], descriptionWidth, limit);
 							return Array.from(
 								{
 									length: Math.max(labelLines.length, descriptionLines.length),
@@ -272,72 +384,185 @@ async function askPanel(
 									? theme.fg("text", input.getValue())
 									: theme.fg("dim", "Type your answer"));
 						const body = [...questionLines];
-						if (options.length > 0) {
-							const budget = Math.max(
-								1,
-								Math.floor(tui.terminal.rows / 2) -
-									(framed ? 2 : 0) -
-									questionLines.length -
-									3,
+						const shownHints = panelHints();
+						const inside = narrow
+							? keyHintRows(theme, shownHints, contentWidth)
+							: [];
+						const focus = Math.min(index, options.length - 1);
+						const span = (visible: number) => {
+							const first = Math.min(
+								Math.max(0, focus - Math.floor(visible / 2)),
+								options.length - visible,
 							);
-							const focus = Math.min(index, options.length - 1);
-							const span = (visible: number) => {
-								const first = Math.min(
-									Math.max(0, focus - Math.floor(visible / 2)),
-									options.length - visible,
-								);
-								return [first, first + visible];
+							return [first, first + visible];
+						};
+						const more = (count: string) => {
+							const long = `${count} more`;
+							const text = visibleWidth(long) <= contentWidth ? long : count;
+							const indent =
+								prefixWidth + visibleWidth(text) <= contentWidth
+									? prefixWidth
+									: 0;
+							return theme.fg("dim", `${" ".repeat(indent)}${text}`);
+						};
+						// One narrow row plan sizes and renders the panel within half the terminal
+						// height (ADR 0019): the focused label and description come first, then
+						// blank rows go, then the two more rows share one, then the question pages.
+						const narrowRows = () => {
+							const cap = Math.floor(tui.terminal.rows / 2) - (framed ? 2 : 0);
+							const bounded = (reserved: number) => {
+								const room = cap - reserved;
+								if (questionLines.length <= room || room < 2)
+									return questionLines;
+								questionPage = room - 1;
+								questionLast = questionLines.length - questionPage;
+								questionTop = Math.min(Math.max(0, questionTop), questionLast);
+								const end = questionTop + questionPage;
+								const cue = [
+									questionTop > 0 ? `${pageKey("up")}↑ ${questionTop}` : "",
+									end < questionLines.length
+										? `${pageKey("down")}↓ ${questionLines.length - end}`
+										: "",
+								].filter(Boolean);
+								return [
+									...questionLines.slice(questionTop, end),
+									theme.fg("dim", `${cue.join(" · ")} more`),
+								];
 							};
-							const height = (visible: number, tall: number) => {
+							if (options.length === 0) {
+								const controls = [
+									freeRow,
+									...(inside.length > 0 ? ["", ...inside] : []),
+								];
+								return [...bounded(controls.length), ...controls];
+							}
+							const gapsMax = inside.length > 0 ? 3 : 2;
+							const whole = (i: number) => {
+								const { label, below } = stack(i);
+								return label.length + below.length;
+							};
+							const least = (i: number) => (described(i) ? 2 : 1);
+							const cues = (visible: number, shared: boolean) => {
 								const [first, last] = span(visible);
-								return (
-									visible -
-									1 +
-									tall +
-									(first > 0 ? 1 : 0) +
-									(last < options.length ? 1 : 0)
+								const count =
+									(first > 0 ? 1 : 0) + (last < options.length ? 1 : 0);
+								return shared ? Math.min(count, 1) : count;
+							};
+							const need = (
+								visible: number,
+								shared: boolean,
+								focused: (i: number) => number,
+							) => {
+								const [first, last] = span(visible);
+								let rows = cues(visible, shared);
+								for (let i = first; i < last; i++)
+									rows += i === index ? focused(i) : least(i);
+								return rows;
+							};
+							const question = bounded(
+								1 + inside.length + need(1, true, least),
+							);
+							const budget = cap - question.length - 1 - inside.length;
+							// The whole focused block first, then its label and first description row.
+							let plan = { gaps: 0, shared: true, visible: 1 };
+							search: for (const focused of [whole, least])
+								for (let gaps = gapsMax; gaps >= -1; gaps--)
+									for (let visible = options.length; visible >= 1; visible--)
+										if (
+											need(visible, gaps < 0, focused) <=
+											budget - Math.max(gaps, 0)
+										) {
+											plan = {
+												gaps: Math.max(gaps, 0),
+												shared: gaps < 0,
+												visible,
+											};
+											break search;
+										}
+							const [first, last] = span(plan.visible);
+							let spare =
+								budget - plan.gaps - need(plan.visible, plan.shared, least);
+							const limits = new Map<number, number>();
+							if (index >= first && index < last) {
+								const grow = Math.max(
+									0,
+									Math.min(spare, whole(index) - least(index)),
 								);
-							};
-							const tall = active ? 1 : optionRows(index).length;
-							let visible =
-								options.length - 1 + tall <= budget
-									? options.length
-									: Math.max(1, budget - tall - 1);
-							if (
-								visible + 1 < options.length &&
-								height(visible + 1, tall) <= budget
-							)
-								visible++;
-							if (options.length <= height(visible, 1))
-								visible = options.length;
-							const activeRows = active
-								? []
-								: optionRows(
-										index,
-										Math.max(1, budget - height(visible, 1) + 1),
-									);
-							const [first, last] = span(visible);
-							const more = (arrow: string, count: number) => {
-								const long = `${arrow} ${count} more`;
-								const text =
-									visibleWidth(long) <= contentWidth
-										? long
-										: `${arrow} ${count}`;
-								const indent =
-									prefixWidth + visibleWidth(text) <= contentWidth
-										? prefixWidth
-										: 0;
-								return theme.fg("dim", `${" ".repeat(indent)}${text}`);
-							};
-							body.push("");
-							if (first > 0) body.push(more("↑", first));
+								spare -= grow;
+								limits.set(index, least(index) + grow);
+							}
+							for (let i = first; i < last; i++) {
+								if (i === index) continue;
+								const grow = whole(i) - least(i);
+								const wraps = grow > 0 && grow <= spare;
+								if (wraps) spare -= grow;
+								limits.set(i, wraps ? whole(i) : least(i));
+							}
+							const above = first > 0 ? `↑ ${first}` : "";
+							const beneath =
+								last < options.length ? `↓ ${options.length - last}` : "";
+							const rows: string[] = [];
+							if (plan.gaps >= 1) rows.push("");
+							const joint = plan.shared && above && beneath;
+							if (above && !joint) rows.push(more(above));
 							for (let i = first; i < last; i++)
-								body.push(...(i === index ? activeRows : optionRows(i)));
-							if (last < options.length)
-								body.push(more("↓", options.length - last));
-							body.push("");
+								rows.push(...stackRows(i, limits.get(i) ?? 1));
+							const tail = joint ? `${above} · ${beneath}` : beneath;
+							if (tail) rows.push(more(tail));
+							if (plan.gaps >= gapsMax) rows.push("");
+							rows.push(freeRow);
+							if (inside.length > 0 && plan.gaps >= 2) rows.push("");
+							return [...question, ...rows, ...inside];
+						};
+						if (narrow) body.splice(0, body.length, ...narrowRows());
+						else {
+							if (options.length > 0) {
+								const budget = Math.max(
+									1,
+									Math.floor(tui.terminal.rows / 2) -
+										(framed ? 2 : 0) -
+										questionLines.length -
+										3,
+								);
+								const height = (visible: number, tall: number) => {
+									const [first, last] = span(visible);
+									return (
+										visible -
+										1 +
+										tall +
+										(first > 0 ? 1 : 0) +
+										(last < options.length ? 1 : 0)
+									);
+								};
+								const tall = active ? 1 : optionRows(index).length;
+								let visible =
+									options.length - 1 + tall <= budget
+										? options.length
+										: Math.max(1, budget - tall - 1);
+								if (
+									visible + 1 < options.length &&
+									height(visible + 1, tall) <= budget
+								)
+									visible++;
+								if (options.length <= height(visible, 1))
+									visible = options.length;
+								const activeRows = active
+									? []
+									: optionRows(
+											index,
+											Math.max(1, budget - height(visible, 1) + 1),
+										);
+								const [first, last] = span(visible);
+								body.push("");
+								if (first > 0) body.push(more(`↑ ${first}`));
+								for (let i = first; i < last; i++)
+									body.push(...(i === index ? activeRows : optionRows(i)));
+								if (last < options.length)
+									body.push(more(`↓ ${options.length - last}`));
+								body.push("");
+							}
+							body.push(freeRow);
 						}
-						body.push(freeRow);
 						const lines = body.map(row);
 						if (framed) {
 							const caption =
@@ -351,46 +576,22 @@ async function askPanel(
 									border("─╯"),
 							);
 						}
-						const hasAnyMarked = marked.size > 0;
-						const enterHint = isFreeTextRow(index)
-							? "Enter:edit free text"
-							: `Enter:${multiple ? (hasAnyMarked ? "submit marked" : "select at least one") : "select"}`;
-						const browseHintParts = ["↑/↓:move"];
-						if (multiple) browseHintParts.push("Space:mark");
-						browseHintParts.push(enterHint);
-						browseHintParts.push(
-							"z:edit free text",
-							"Esc:panel stays open",
-							"Shift+X:dismiss",
-						);
-						const editEnterHint = multiple
-							? hasAnyMarked
-								? "submit marked"
-								: "select at least one"
-							: "submit";
-						const hintParts =
-							mode === "edit"
-								? [
-										`Enter:${editEnterHint}`,
-										"↑/↓:leave & move",
-										"Esc:back to browse",
-									]
-								: browseHintParts;
-						hints.set(
-							hintParts.map((part) => {
-								const split = part.indexOf(":");
-								return {
-									key: part.slice(0, split),
-									action: part.slice(split + 1),
-								};
-							}),
-						);
+						// Narrow, the panel shows its hints itself and leaves the footer empty (S-08).
+						hints.set(narrow ? [] : shownHints);
 						return lines.map((line) =>
 							truncateToWidth(" ".repeat(edge) + line, width),
 						);
 					},
 					invalidate() {},
 					handleInput(data: string) {
+						const pageUp = pageKeyMatches(data, "up");
+						if (questionPage > 0 && (pageUp || pageKeyMatches(data, "down"))) {
+							questionTop = Math.min(
+								Math.max(0, questionTop + (pageUp ? -1 : 1) * questionPage),
+								questionLast,
+							);
+							return;
+						}
 						if (mode === "edit") {
 							if (keybindings.matches(data, "tui.select.up")) {
 								mode = "browse";
