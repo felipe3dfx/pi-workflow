@@ -414,7 +414,9 @@ function thinkingHeader(parts: HeaderParts, width: number) {
 		line += t.fg("dim", ` · ${title}`);
 		used += 3 + visibleWidth(title);
 	}
-	const key = parts.hint?.() ? keyText("app.thinking.toggle") : "";
+	// Narrow, the row's tap is the expand affordance and the inline hint goes (NS-18).
+	const key =
+		parts.hint?.() && !narrowScreen() ? keyText("app.thinking.toggle") : "";
 	const hint = key ? `  (${terminalSafeLine(key)} to expand)` : "";
 	if (hint && used + visibleWidth(hint) <= width) line += t.fg("dim", hint);
 	return line;

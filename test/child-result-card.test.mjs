@@ -104,7 +104,10 @@ test("a collapsed result reads its elapsed time in the shared duration format on
 				width,
 			);
 			if (columns < 60)
-				assert.equal(row, `${`◆ Subagent worker 5636  ${label}`.padEnd(41)}›`);
+				assert.equal(
+					row,
+					`${`◆ Subagent worker 5636 completed  ${label}`.padEnd(41)}›`,
+				);
 			else assert.ok(row.includes(`Subagent worker 5636  ${label}`), row);
 		}
 	}
@@ -811,6 +814,83 @@ test("below 60 terminal columns an ended card paints its glyph and state word fr
 	painted("dim");
 });
 
+test("below 60 terminal columns a completed card without a Verdict reads completed in the success tone, and a Verdict stays its only state word", (t) => {
+	const { card } = cards(t);
+	densityTerminal(t, 44);
+	const result = (fields) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: { ...details, ...fields },
+		});
+	const bare = result({});
+	assert.deepEqual(plain(bare, 43), [
+		"",
+		"◆ Subagent worker 5636 completed  1m 02s ›",
+	]);
+	assert.ok(bare.render(43)[1].includes(theme().fg("success", "completed")));
+	const passed = result({ verdict: "pass", result: { verdict: "pass" } });
+	assert.deepEqual(plain(passed, 43), [
+		"",
+		`◆ Subagent worker 5636 pass  1m 02s${" ".repeat(6)}›`,
+	]);
+	assert.ok(passed.render(43)[1].includes(theme().fg("success", "pass")));
+});
+
+test("below 60 terminal columns a collapsed card's reason takes up to 2 lines, the second cut with …, a tap on it opens the card, and 60 columns or more keeps one line", (t) => {
+	const { card } = cards(t);
+	const terminal = densityTerminal(t, 44);
+	const reason = (text) =>
+		card({
+			customType: "pi-workflow-child-result",
+			details: {
+				...details,
+				verdict: "blocked",
+				result: { verdict: "blocked", reason: text },
+			},
+		});
+	const long = reason(
+		"Database access is missing because the staging credentials expired yesterday and nobody renewed them",
+	);
+	const narrow = [
+		"",
+		"◆ Subagent worker 5636 blocked  1m 02s   ›",
+		"  Database access is missing because the",
+		"  staging credentials expired yesterday a…",
+	];
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.deepEqual(
+		plain(reason("Database access is missing because the staging role"), 43),
+		[
+			"",
+			"◆ Subagent worker 5636 blocked  1m 02s   ›",
+			"  Database access is missing because the",
+			"  staging role",
+		],
+	);
+	terminal.columns = 60;
+	const wide = [
+		"",
+		"   ◆ Subagent worker 5636 blocked  1m 02s",
+		"     Database access is missing because the staging c...",
+	];
+	assert.deepEqual(plain(long, 59), wide);
+	terminal.columns = 59;
+	assert.deepEqual(plain(long, 43), narrow);
+	assert.ok(
+		long.handleMouse({
+			type: "click",
+			button: "left",
+			x: 2,
+			y: 3,
+			width: 43,
+			height: 4,
+		})?.handled,
+	);
+	assert.ok(plain(long, 43).includes("  alt+a  open in subagents view"));
+	terminal.columns = 60;
+	assert.ok(plain(long, 59).at(-1).includes("alt+a"));
+});
+
 const blocked = {
 	...details,
 	verdict: "blocked",
@@ -829,7 +909,7 @@ test("below 60 terminal columns a collapsed result or question card keeps a dim 
 	const result = card({ customType: "pi-workflow-child-result", details });
 	assert.deepEqual(plain(result, 43), [
 		"",
-		`◆ Subagent worker 5636  1m 02s${" ".repeat(11)}›`,
+		"◆ Subagent worker 5636 completed  1m 02s ›",
 	]);
 	assert.ok(result.render(43)[1].endsWith(theme().fg("dim", "›")));
 	assert.deepEqual(
@@ -953,7 +1033,7 @@ test("one result card crossing 60 terminal columns in both directions gains › 
 	terminal.columns = 59;
 	assert.deepEqual(
 		plain(component, 58)[1],
-		`◆ Subagent worker 5636  1m 02s${" ".repeat(26)}›`,
+		`◆ Subagent worker 5636 completed  1m 02s${" ".repeat(16)}›`,
 	);
 	terminal.columns = 60;
 	assert.deepEqual(component.render(59), wideCards.result.collapsed[59]);

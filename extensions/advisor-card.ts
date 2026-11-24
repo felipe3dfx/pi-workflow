@@ -39,7 +39,8 @@ type Result = {
 };
 type Phase = "running" | "done" | "failed" | "stopped" | "refused";
 
-const glyph = "◇";
+// Narrow, the Advisor takes the cards' ◆ and the label carries its role (NS-20).
+const glyph = () => (narrowScreen() ? "◆" : "◇");
 const previewLines = 3;
 const minModel = 10;
 const running = themeVar("cyan", "dim");
@@ -108,9 +109,13 @@ class AdvisorCard implements Component {
 			stopped: "dim",
 			refused: "dim",
 		};
-		return this.phase === "running"
-			? running(text, this.theme)
-			: this.theme.fg(tones[this.phase], text);
+		if (this.phase === "running")
+			return narrowScreen()
+				? runStateMark("running").paint(this.theme, text)
+				: running(text, this.theme);
+		if (this.phase === "stopped" && narrowScreen())
+			return runStateMark("cancelled").paint(this.theme, text);
+		return this.theme.fg(tones[this.phase], text);
 	}
 
 	word() {
@@ -141,7 +146,7 @@ class AdvisorCard implements Component {
 	head(width: number, narrow: boolean) {
 		const t = this.theme;
 		const word = this.word();
-		const left = `${this.paint(glyph)} ${t.bold(t.fg("muted", "Advisor"))}${word ? ` ${word}` : ""}`;
+		const left = `${this.paint(glyph())} ${t.bold(t.fg("muted", "Advisor"))}${word ? ` ${word}` : ""}`;
 		const elapsed = this.elapsed();
 		if (narrow) return elapsed ? `${left} ${t.fg("dim", elapsed)}` : left;
 		let model: string | undefined;
@@ -231,7 +236,7 @@ class AdvisorCard implements Component {
 	}
 
 	plain() {
-		const head = plainHead(this.head(Number.POSITIVE_INFINITY, false), glyph);
+		const head = plainHead(this.head(Number.POSITIVE_INFINITY, false), glyph());
 		if (this.phase === "running" || !this.text) return head;
 		if (this.phase !== "done") return `${head}\n${this.text}`;
 		const { shown, more } = preview(this.text.split("\n"), this.expanded);

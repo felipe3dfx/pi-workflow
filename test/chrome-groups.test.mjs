@@ -743,7 +743,7 @@ test("below 60 terminal columns every transcript block puts its glyph in the 2-c
 		"◆ Thought",
 		"◈ Read 1 file, Searched 1 pattern",
 		"◆ Run ls",
-		`◆ Subagent worker 1111  1m 02s${" ".repeat(11)}›`,
+		"◆ Subagent worker 1111 completed  1m 02s ›",
 	])
 		assert.ok(lines.includes(expected), `${expected}\n${lines.join("\n")}`);
 	const asked = lines.indexOf("◆ Asked Which rollout?");
@@ -788,6 +788,61 @@ test("crossing 60 terminal columns in both directions moves the same Asked answe
 		arrow.push(answer.indexOf("↳"));
 	}
 	assert.deepEqual(arrow, [5, 0, 5]);
+});
+
+test("below 60 terminal columns a wrapping Asked question hangs under its first word, and the same block crossing 60 columns in both directions wraps as today wide", (t) => {
+	const { mode, render } = chat(t);
+	const terminal = densityTerminal(t, 44);
+	asked(
+		mode,
+		"Which rollout should we use for the narrow layout on the phone?",
+		"Gradual rollout",
+	);
+	const block = (width) => {
+		const lines = render(width).map((line) => line.trimEnd());
+		const head = lines.findIndex((line) => line.includes("Asked"));
+		return lines.slice(head, head + 3);
+	};
+	const narrow = [
+		"◆ Asked Which rollout should we use for",
+		"        the narrow layout on the phone?",
+		"↳ Gradual rollout",
+	];
+	assert.deepEqual(block(43), narrow);
+	terminal.columns = 60;
+	const wide = [
+		"   ◆ Asked Which rollout should we use for the narrow",
+		"   layout on the phone?",
+		"     ↳ Gradual rollout",
+	];
+	assert.deepEqual(block(59), wide);
+	terminal.columns = 59;
+	assert.deepEqual(block(58), [
+		"◆ Asked Which rollout should we use for the narrow layout",
+		"        on the phone?",
+		"↳ Gradual rollout",
+	]);
+	terminal.columns = 44;
+	assert.deepEqual(block(43), narrow);
+	terminal.columns = 60;
+	assert.deepEqual(block(59), wide);
+});
+
+test("below 60 terminal columns an Asked question that opens with a newline still hangs under its first word", (t) => {
+	const { mode, render } = chat(t);
+	densityTerminal(t, 44);
+	asked(
+		mode,
+		"\nWhich rollout should we use for the narrow layout on the phone?",
+		"Gradual rollout",
+	);
+	const lines = render(43).map((line) => line.trimEnd());
+	const head = lines.findIndex((line) => line.includes("Asked"));
+	assert.deepEqual(lines.slice(head, head + 3), [
+		"◆ Asked Which rollout should we use for",
+		"        the narrow layout on the phone?",
+		"↳ Gradual rollout",
+	]);
 });
 
 test("at 60 and 100 terminal columns the selection background reaches the last column", (t) => {
@@ -1248,9 +1303,9 @@ test("below 60 terminal columns the advisor card takes the row's lane through th
 	const card = advisorRow(t, 9_000, "one\n\ntwo\n\nthree");
 	mode.chatContainer.addChild(card);
 	const lines = render(43);
-	const head = lines.findIndex((line) => line.startsWith("◇ Advisor "));
+	const head = lines.findIndex((line) => line.startsWith("◆ Advisor "));
 	assert.deepEqual(lines.slice(head, head + 3), [
-		`◇ Advisor 9.0s${" ".repeat(27)}›`,
+		`◆ Advisor 9.0s${" ".repeat(27)}›`,
 		"  claude-opus-5 (high)",
 		"  one",
 	]);

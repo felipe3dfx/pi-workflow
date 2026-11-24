@@ -104,6 +104,14 @@ function header(
 		return `${glyph} ${label("Subagent")} ${rest} ${theme.fg("warning", `asks · question ${card.question ?? "?"}`)}`;
 	if (card.state && card.state !== "completed")
 		rest += ` ${paintTone(theme, card, question, card.state)}`;
+	// Narrow, a collapsed completed card without a Verdict still reads its state (owner, #417).
+	else if (
+		card.state === "completed" &&
+		!card.verdict &&
+		!open &&
+		narrowScreen()
+	)
+		rest += ` ${runStateMark("completed").paint(theme, "completed")}`;
 	if (card.verdict)
 		rest += ` ${theme.fg(verdictTone(card.verdict), card.verdict)}`;
 	const line = `${glyph} ${label("Subagent")} ${rest}`;
@@ -145,6 +153,15 @@ function header(
 		return visibleWidth(bare) <= width ? bare : timed;
 	}
 	return `${glyph} ${label(truncateToWidth("Subagent", labelRoom, cut))} ${rest} ${dim(time)}`;
+}
+
+// Narrow, the reason takes up to 2 lines, the second cut with … (NS-21); wide keeps one.
+function reasonLines(why: string, inner: number, narrow: boolean) {
+	if (!narrow) return [why];
+	const [first = "", ...rest] = wrapTextWithAnsi(why, inner);
+	return rest.length === 0
+		? [first]
+		: [first, truncateToWidth(rest.join(" "), inner, "…")];
 }
 
 export function clean(text: string) {
@@ -320,7 +337,12 @@ class ResultCard implements Component {
 				if (open || this.question) lines.push(...bodyLines(this.body, inner));
 				else {
 					const why = reason(this.card);
-					if (why) lines.push(t.fg("dim", terminalSafeLine(why)));
+					if (why)
+						lines.push(
+							...reasonLines(terminalSafeLine(why), inner, narrow).map((line) =>
+								t.fg("dim", line),
+							),
+						);
 				}
 				if (open)
 					lines.push(...instruction("alt+a  open in subagents view", inner));
