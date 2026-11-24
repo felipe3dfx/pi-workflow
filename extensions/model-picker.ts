@@ -12,11 +12,13 @@ import {
 	type SelectItem,
 	SelectList,
 	type SelectListTheme,
+	truncateToWidth,
 	type TuiMouseEvent,
 	wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
 import {
+	fit,
 	type Hint,
 	hintRows,
 	menuRow,
@@ -24,6 +26,7 @@ import {
 	modalMetrics,
 	overlayAtOpen,
 	sectionRule,
+	selectedRow,
 } from "./chrome-menus.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import { narrowScreen } from "./visual-language.ts";
@@ -96,34 +99,40 @@ export function createScreenFrame(
 		else close();
 	};
 
+	// `second`, given only on a narrow screen, puts each item on two lines: the
+	// row, then that text indented under it, ending with … when it cannot fit.
 	function rows(
 		list: SelectList,
 		items: SelectItem[],
 		width: number,
 		chevron?: boolean,
+		second?: (item: SelectItem) => string,
 	): string[] {
 		const selected = Math.max(
 			0,
 			items.findIndex((item) => item.value === list.getSelectedItem()?.value),
 		);
+		const count = second ? Math.max(1, Math.floor(visible / 2)) : visible;
 		const start = Math.max(
 			0,
-			Math.min(selected - Math.floor(visible / 2), items.length - visible),
+			Math.min(selected - Math.floor(count / 2), items.length - count),
 		);
-		const shown = items
-			.slice(start, start + visible)
-			.map((item, i) =>
-				menuRow(
-					theme,
-					item.label,
-					item.description ?? "",
-					start + i === selected,
-					width,
-					chevron,
-					narrow,
-				),
+		const shown = items.slice(start, start + count).flatMap((item, i) => {
+			const active = start + i === selected;
+			const row = menuRow(
+				theme,
+				item.label,
+				item.description ?? "",
+				active,
+				width,
+				chevron,
+				narrow,
 			);
-		if (items.length > visible) {
+			if (!second) return [row];
+			const text = `    ${truncateToWidth(second(item), Math.max(0, width - 4), "…")}`;
+			return [row, active ? selectedRow(theme, text, width) : fit(text, width)];
+		});
+		if (items.length > count) {
 			shown.push(theme.fg("dim", `(${selected + 1}/${items.length})`));
 		}
 		return shown;
@@ -188,6 +197,7 @@ export function createScreenFrame(
 	return {
 		push,
 		pop,
+		narrow,
 		notify: (text: string) => {
 			notice = text;
 		},

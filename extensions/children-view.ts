@@ -78,6 +78,7 @@ import {
 	legacyDurationWidth,
 	minThoughtMs,
 	narrowScreen,
+	pinRight,
 	runStateMark,
 	spread,
 } from "./visual-language.ts";
@@ -1457,7 +1458,9 @@ function createChildrenView(
 		focused: boolean,
 	) {
 		const now = Date.now();
-		const two = rows >= twoLineRows;
+		// Below 60 columns every row takes two lines, however short the terminal, and a cut ends with ….
+		const two = narrow || rows >= twoLineRows;
+		const pair = narrow ? pinRight : spread;
 		const lines: string[] = [];
 		const ids: (string | undefined)[] = [];
 		let section: string | undefined;
@@ -1541,10 +1544,11 @@ function createChildrenView(
 						shapes.flatMap(([labels, gap]) =>
 							spends.map((rest) => {
 								const warn = [...labels, ...warning];
-								const dim = theme.fg("dim", [time, ...rest].join(" · "));
-								return warn.length > 0
-									? `${theme.fg("warning", warn.join(" · "))}${gap}${dim}`
-									: dim;
+								const info = [time, ...rest].filter((field) => field !== "");
+								const dim = theme.fg("dim", info.join(" · "));
+								if (warn.length === 0) return dim;
+								const shown = theme.fg("warning", warn.join(" · "));
+								return info.length > 0 ? `${shown}${gap}${dim}` : shown;
 							}),
 						),
 					),
@@ -1554,9 +1558,10 @@ function createChildrenView(
 								...(child.undelivered?.length
 									? [`${child.undelivered.length} not sent`]
 									: []),
-							].map(
-								(steer) =>
-									`${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
+							].map((steer) =>
+								time === ""
+									? theme.fg("warning", steer)
+									: `${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
 							)
 						: []),
 				];
@@ -1565,12 +1570,15 @@ function createChildrenView(
 					if (found) return found;
 				}
 				const [labels, gap] = shapes.at(-1) ?? [steers, dot];
-				const room =
-					(budgets.at(-1) ?? width) - visibleWidth(gap) - visibleWidth(time);
-				return `${truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…")}${gap}${theme.fg("dim", time)}`;
+				const budget = budgets.at(-1) ?? width;
+				const cut = (room: number) =>
+					truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…");
+				return time === ""
+					? cut(budget)
+					: `${cut(budget - visibleWidth(gap) - visibleWidth(time))}${gap}${theme.fg("dim", time)}`;
 			};
-			// The whole head and its gap come first where the base's whole-second time kept them, and on narrow
-			// screens; otherwise, and when nothing fits beside them, the tail alone takes the row as before.
+			// The whole head and its gap come first where the base's whole-second time kept them; otherwise, and
+			// when nothing fits beside them, the tail alone takes the row as before.
 			const grown =
 				item.live && child.state !== "queued"
 					? visibleWidth(clock) -
@@ -1579,7 +1587,6 @@ function createChildrenView(
 						)
 					: 0;
 			const kept =
-				narrow ||
 				visibleWidth(head) + 1 + visibleWidth(right([clock])) - grown <= width;
 			const tail =
 				[[state, ...spend], [state], [clock]]
@@ -1607,28 +1614,33 @@ function createChildrenView(
 			const first = () =>
 				visibleWidth(head) + 1 + visibleWidth(child.state) > width
 					? head
-					: spread(head, theme.fg("dim", child.state), width);
-			const second = () => {
-				const time = runTime(child, now);
-				const payload = fit(
+					: pair(head, theme.fg("dim", child.state), width);
+			// The second line's metadata is fitted as whole fields; the time is empty when the first line keeps it.
+			const suffix = (time: string) =>
+				fit(
 					time,
 					[width],
 					[[steers, dot]],
 					[spend, usage({ ...used, cost: 0 }), []],
-					[right([time, ...spend])],
+					[right(time === "" ? spend : [time, ...spend])],
 				);
+			const second = (time: string) => {
+				const payload = suffix(time);
 				const free = width - visibleWidth(payload);
 				const room = free - 5;
 				return room >= Math.min(visibleWidth(detail), 4)
-					? spread(`    ${detail}`, payload, width)
+					? pair(`    ${detail}`, payload, width)
 					: `${" ".repeat(Math.max(0, free))}${payload}`;
 			};
 			const shown = two
 				? timeOnSecondLine
-					? [first(), second()]
+					? [first(), second(runTime(child, now))]
 					: [
-							spread(head, theme.fg("dim", state), width),
-							spread(`    ${detail}`, right(spend), width),
+							pair(head, theme.fg("dim", state), width),
+							// Only a narrow suffix that overflows is fitted; one that fits keeps the ellipsized detail beside it.
+							narrow && visibleWidth(right(spend)) > width
+								? second("")
+								: pair(`    ${detail}`, right(spend), width),
 						]
 				: [
 						spread(

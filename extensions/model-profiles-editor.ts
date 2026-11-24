@@ -107,14 +107,23 @@ export function createModelProfilesEditor(
 				return {
 					value: specialist,
 					label: specialist,
-					description: entry
-						? theme.fg(
-								"text",
-								`${terminalSafeLine(entry.model)} · thinking: ${entry.thinking}`,
-							)
-						: theme.fg("dim", "inherits session model"),
+					description: frame.narrow
+						? theme.fg("dim", entry?.thinking ?? "")
+						: entry
+							? theme.fg(
+									"text",
+									`${terminalSafeLine(entry.model)} · thinking: ${entry.thinking}`,
+								)
+							: theme.fg("dim", "inherits session model"),
 				};
 			});
+		// On a narrow screen each specialist's model goes whole on a line of its own.
+		const model = (item: SelectItem) => {
+			const entry = profile()[item.value as Specialist];
+			return entry
+				? theme.fg("muted", terminalSafeLine(entry.model))
+				: theme.fg("dim", "inherits session model");
+		};
 		let list = rebuild(0);
 		function rebuild(selected: number) {
 			return selectList(
@@ -154,7 +163,7 @@ export function createModelProfilesEditor(
 			],
 			render: (width) => [
 				sectionRule(theme, "Specialists", width),
-				...rows(list, items(), width, true),
+				...rows(list, items(), width, true, frame.narrow ? model : undefined),
 			],
 			handleInput(data) {
 				const key = printable(data);
