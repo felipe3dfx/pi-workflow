@@ -1544,10 +1544,11 @@ function createChildrenView(
 						shapes.flatMap(([labels, gap]) =>
 							spends.map((rest) => {
 								const warn = [...labels, ...warning];
-								const dim = theme.fg("dim", [time, ...rest].join(" · "));
-								return warn.length > 0
-									? `${theme.fg("warning", warn.join(" · "))}${gap}${dim}`
-									: dim;
+								const info = [time, ...rest].filter((field) => field !== "");
+								const dim = theme.fg("dim", info.join(" · "));
+								if (warn.length === 0) return dim;
+								const shown = theme.fg("warning", warn.join(" · "));
+								return info.length > 0 ? `${shown}${gap}${dim}` : shown;
 							}),
 						),
 					),
@@ -1557,9 +1558,10 @@ function createChildrenView(
 								...(child.undelivered?.length
 									? [`${child.undelivered.length} not sent`]
 									: []),
-							].map(
-								(steer) =>
-									`${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
+							].map((steer) =>
+								time === ""
+									? theme.fg("warning", steer)
+									: `${theme.fg("warning", steer)} ${theme.fg("dim", time)}`,
 							)
 						: []),
 				];
@@ -1568,9 +1570,12 @@ function createChildrenView(
 					if (found) return found;
 				}
 				const [labels, gap] = shapes.at(-1) ?? [steers, dot];
-				const room =
-					(budgets.at(-1) ?? width) - visibleWidth(gap) - visibleWidth(time);
-				return `${truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…")}${gap}${theme.fg("dim", time)}`;
+				const budget = budgets.at(-1) ?? width;
+				const cut = (room: number) =>
+					truncateToWidth(theme.fg("warning", labels.join(" · ")), room, "…");
+				return time === ""
+					? cut(budget)
+					: `${cut(budget - visibleWidth(gap) - visibleWidth(time))}${gap}${theme.fg("dim", time)}`;
 			};
 			// The whole head and its gap come first where the base's whole-second time kept them; otherwise, and
 			// when nothing fits beside them, the tail alone takes the row as before.
@@ -1610,15 +1615,17 @@ function createChildrenView(
 				visibleWidth(head) + 1 + visibleWidth(child.state) > width
 					? head
 					: pair(head, theme.fg("dim", child.state), width);
-			const second = () => {
-				const time = runTime(child, now);
-				const payload = fit(
+			// The second line's metadata is fitted as whole fields; the time is empty when the first line keeps it.
+			const suffix = (time: string) =>
+				fit(
 					time,
 					[width],
 					[[steers, dot]],
 					[spend, usage({ ...used, cost: 0 }), []],
-					[right([time, ...spend])],
+					[right(time === "" ? spend : [time, ...spend])],
 				);
+			const second = (time: string) => {
+				const payload = suffix(time);
 				const free = width - visibleWidth(payload);
 				const room = free - 5;
 				return room >= Math.min(visibleWidth(detail), 4)
@@ -1627,10 +1634,10 @@ function createChildrenView(
 			};
 			const shown = two
 				? timeOnSecondLine
-					? [first(), second()]
+					? [first(), second(runTime(child, now))]
 					: [
 							pair(head, theme.fg("dim", state), width),
-							pair(`    ${detail}`, right(spend), width),
+							narrow ? second("") : pair(`    ${detail}`, right(spend), width),
 						]
 				: [
 						spread(

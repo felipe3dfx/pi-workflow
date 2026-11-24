@@ -999,6 +999,88 @@ test("a short narrow Fleet row keeps its identity and Run state on the first lin
 	]);
 });
 
+test("a 43-column Fleet fits an overflowing second line with whole fields: a complete Steer state and the whole cost, never a partial amount", (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	densityTerminal(t, 43);
+	const worker = record("5636", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const cells = listCells(
+		open(
+			fakeSessions([worker], {
+				[worker.id]: { entries: [scripted("s1", 100_000, 1.23)] },
+			}),
+			{ rows: 31 },
+		).lines(43),
+	);
+	const at = findListRowIndex(cells, "worker 5636");
+	assert.match(cells[at], /completed · 3\.2s $/, cells.join("\n"));
+	const second = cells[at + 1];
+	assert.ok(
+		second.endsWith(" 1 undelivered · 100.0k tok · $1.23 "),
+		cells.join("\n"),
+	);
+	assert.doesNotMatch(second, /\$1\.2(?!3)/);
+});
+
+test("a 43-column Fleet fits an overflowing transcript warning whole beside a complete Steer state instead of cutting it silently", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	densityTerminal(t, 43);
+	const child = record("27c1", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		undelivered: ["late"],
+	});
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(fakeSessions([child]), { rows: 31, audit: capture.audit });
+	await settle(view, 43);
+	const cells = listCells(view.lines(43));
+	const at = findListRowIndex(cells, "worker 27c1");
+	assert.match(cells[at], /completed · 3\.2s $/, cells.join("\n"));
+	const second = cells[at + 1];
+	assert.ok(
+		second.endsWith(" 1 undelivered · incomplete transcript "),
+		cells.join("\n"),
+	);
+	assert.doesNotMatch(second, /incomplete transc(?!ript)/);
+});
+
+test("a 43-column Fleet second line that still overflows shows partial log and drops whole usage fields rather than cutting one", async (t) => {
+	t.mock.timers.enable({ apis: ["Date"], now });
+	densityTerminal(t, 43);
+	const child = record("9b4e", {
+		state: "completed",
+		startedAt: now - 3_240,
+		endedAt: now,
+		text: "Done.",
+		steering: ["focus", "on the parser"],
+		undelivered: ["late"],
+	});
+	const capture = audited(t, [child], { parent: undefined });
+	const view = open(
+		fakeSessions([child], {
+			[child.id]: { entries: [scripted("s1", 100_000, 1.23)] },
+		}),
+		{ rows: 31, audit: capture.audit },
+	);
+	await settle(view, 43);
+	const cells = listCells(view.lines(43));
+	const at = findListRowIndex(cells, "worker 9b4e");
+	assert.match(cells[at], /completed · 3\.2s $/, cells.join("\n"));
+	const second = cells[at + 1];
+	assert.ok(
+		second.endsWith(" 2 pending · 1 undelivered · partial log "),
+		cells.join("\n"),
+	);
+	assert.doesNotMatch(second, /\$|tok|incomplete/);
+});
+
 test("a one-line row with an incomplete transcript keeps a whole Steer label and time and leaves the warning to the detail when it cannot fit", async (t) => {
 	t.mock.timers.enable({ apis: ["Date"], now });
 	for (const [fields, label] of [
