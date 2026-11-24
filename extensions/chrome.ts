@@ -264,8 +264,9 @@ export function renderStatusRow(
 	const cascade = narrow
 		? grownBy > 0 || !whole
 		: !fits && needed(left(true), right(true)) - grownBy <= room;
+	// Without a step timer to keep, the painted row is cut as the base cut it.
 	const kept =
-		narrow || fits
+		narrow || fits || !phase
 			? left(true)
 			: left(
 					true,

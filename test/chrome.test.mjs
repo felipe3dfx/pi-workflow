@@ -1065,6 +1065,34 @@ test("a status row whose whole timers kept their width keeps the base's layout, 
 	);
 });
 
+test("at 60 columns the Dark-theme status row that cuts the name with no step timer renders the base's bytes", (t) => {
+	densityTerminal(t, 60);
+	// The Dark theme's text and dim colors, as Pi paints them.
+	const sgr = { text: "38;2;222;224;225", dim: "38;2;126;136;142" };
+	const dark = {
+		fg: (color, text) => `\x1b[${sgr[color]}m${text}\x1b[39m`,
+		bold: (text) => `\x1b[1m${text}\x1b[22m`,
+		bg: (_color, text) => text,
+	};
+	const [line] = renderStatusRow(
+		dark,
+		{
+			frame: 0,
+			label: "Working",
+			tool: "mcp__github__list_pull_request_review_comments",
+			turnMs: 45_000,
+			outputTokens: 3_000,
+		},
+		60,
+	);
+	// Captured from 5d1f247, the base before narrow screens.
+	assert.equal(
+		line,
+		"   \x1b[38;2;222;224;225m⠋\x1b[39m \x1b[38;2;126;136;142mRun \x1b[39m\x1b[38;2;222;224;225mmcp__github__list_pull_request_revie\x1b[0m...\x1b[0m \x1b[38;2;126;136;142m45s ⇣3.00k\x1b[39m",
+	);
+	assert.equal(Buffer.byteLength(line), 162);
+});
+
 const wideBytes = JSON.parse(
 	readFileSync(new URL("./fixtures/wide-render.json", import.meta.url), "utf8"),
 );
