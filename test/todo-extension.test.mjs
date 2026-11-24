@@ -1097,6 +1097,25 @@ test("below 60 columns a height change that keeps the Todo capacity keeps the pr
 	assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
 });
 
+test("below 60 columns a height round trip that changes the Todo capacity keeps the wide page to return to", async (t) => {
+	const { terminal, tui, view, next } = await pagedTodo(t, 60, 20);
+	view();
+	await next();
+	view();
+	await next();
+	assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	for (const columns of [43, 59]) {
+		terminal.columns = columns;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+		tui.terminal.rows = 29;
+		assert.deepEqual([view().first, view().page], ["Task 8", "2/3"]);
+		tui.terminal.rows = 31;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
+		terminal.columns = 60;
+		assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	}
+});
+
 test("a Next that cannot leave the last narrow page keeps the wide page to return to", async (t) => {
 	const { terminal, widget, view, next } = await pagedTodo(t, 60, 12);
 	view();
