@@ -1029,7 +1029,12 @@ function reserve(
 
 type BodyWindow = { lines: readonly string[]; row(shown: number): number };
 
-type SettingsView = { narrow: boolean; width: number; window?: BodyWindow };
+type SettingsView = {
+	narrow: boolean;
+	width: number;
+	crossed: boolean;
+	window?: BodyWindow;
+};
 
 const settingsViews = new WeakMap<object, SettingsView>();
 
@@ -1038,10 +1043,16 @@ const settingsViews = new WeakMap<object, SettingsView>();
 function settingsView(selector: object, width: number) {
 	let view = settingsViews.get(selector);
 	if (!view) {
-		view = { narrow: narrowScreen(), width };
+		view = { narrow: narrowScreen(), width, crossed: false };
 		settingsViews.set(selector, view);
 	}
+	if (narrowScreen() !== view.narrow) view.crossed = true;
 	return view;
+}
+
+// A modal opened wide follows the terminal until it first crosses 60 columns.
+function settingsWidth(view: SettingsView, width: number) {
+	return view.narrow || view.crossed ? Math.min(view.width, width) : width;
 }
 
 // The selected row and the first hint row of a whole settings body.
@@ -1100,7 +1111,7 @@ function renderSettings(this: SettingsSelectorState, width: number) {
 	const list = this.getSettingsList();
 	const view = settingsView(this, width);
 	const { edge, outer, inner, top } = settingsFrame(
-		Math.min(view.width, width),
+		settingsWidth(view, width),
 		view.narrow,
 	);
 	const pass: NonNullable<typeof settingsPass> = {
@@ -1154,7 +1165,8 @@ function closeSettings(list: SettingsListState) {
 
 function wrapSettingsMouse(original: PatchMethod) {
 	return function (this: SettingsSelectorState, event: TuiMouseEvent) {
-		const { narrow, width, window } = settingsView(this, event.width);
+		const view = settingsView(this, event.width);
+		const { narrow, window } = view;
 		const {
 			edge,
 			outer,
@@ -1162,7 +1174,7 @@ function wrapSettingsMouse(original: PatchMethod) {
 			inner,
 			top,
 			close: shut,
-		} = settingsFrame(Math.min(width, event.width), narrow);
+		} = settingsFrame(settingsWidth(view, event.width), narrow);
 		const x = event.x - edge;
 		if (event.y === 0 && shut && x >= shut.start && x < shut.end) {
 			if (event.type !== "click" || event.button !== "left") return undefined;

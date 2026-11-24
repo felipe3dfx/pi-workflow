@@ -448,6 +448,24 @@ test("an open overlay keeps the width and padding it opened with while the termi
 	fullWidth(await layout(await openAll()), 59);
 });
 
+test("settings opened at 60 columns follow the terminal to 100 and back, rendering and taking clicks as a fresh dock would", (t) => {
+	patchMenus();
+	t.after(restoreMenus);
+	const terminal = densityTerminal(t, 60);
+	const { selector } = settingsSelector();
+	for (const columns of [60, 100, 60]) {
+		terminal.columns = columns;
+		assert.deepEqual(
+			plain(selector.render(columns)),
+			plain(settingsSelector().selector.render(columns)),
+		);
+	}
+	terminal.columns = 100;
+	assert.equal(plain(selector.render(100))[0].trimEnd().length, 99);
+	assert.equal(selector.handleMouse(click(90, 3, 100))?.handled, true);
+	assert.match(plain(selector.render(100))[3], /▸ Setting 0 +off +│$/);
+});
+
 const overlongModel = "openai-codex/gpt-6-astra-preview-2026-11-extended";
 
 const specialistProfiles = {
