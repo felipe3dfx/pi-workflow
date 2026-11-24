@@ -10,7 +10,11 @@ import {
 	initTheme,
 	SettingsSelectorComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, SettingsList } from "@earendil-works/pi-tui";
+import {
+	Container,
+	SettingsList,
+	setCapabilityOverrides,
+} from "@earendil-works/pi-tui";
 import { createChatViewport } from "../node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/chat-viewport.js";
 
 import { createAdvisor } from "../extensions/advisor.ts";
@@ -31,6 +35,9 @@ import { eventually } from "./support/eventually.mjs";
 import { catalog } from "./support/model-picker.mjs";
 import { piScreen } from "./support/pi-screen.mjs";
 
+// The wide fixtures hold truecolor bytes: pin the colour mode before the theme
+// loads, so it does not follow COLORTERM, TERM or TERM_PROGRAM.
+setCapabilityOverrides({ trueColor: true, hyperlinks: false });
 initTheme("dark", false);
 const THEME = Symbol.for("@earendil-works/pi-coding-agent:theme");
 const theme = globalThis[THEME];

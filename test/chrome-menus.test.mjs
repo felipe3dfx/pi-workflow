@@ -20,6 +20,7 @@ import {
 	KeybindingsManager,
 	SelectList,
 	SettingsList,
+	setCapabilityOverrides,
 	Spacer,
 	stripTerminalSequences,
 	setKeybindings,
@@ -41,6 +42,9 @@ import {
 import { createChromeEditor } from "../extensions/chrome-editor.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
 
+// The wide fixtures hold truecolor bytes: pin the colour mode before the theme
+// loads, so it does not follow COLORTERM, TERM or TERM_PROGRAM.
+setCapabilityOverrides({ trueColor: true, hyperlinks: false });
 initTheme("dark", false);
 const theme = globalThis[Symbol.for("@earendil-works/pi-coding-agent:theme")];
 const plain = (lines) => lines.map((line) => stripTerminalSequences(line));

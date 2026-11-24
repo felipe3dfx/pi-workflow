@@ -16,6 +16,7 @@ import {
 import { capabilities } from "../extensions/configure.ts";
 import { replaceSelection } from "../extensions/shell.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { trueColor } from "./support/true-color.mjs";
 import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 replaceSelection({
@@ -989,6 +990,7 @@ test("below 60 terminal columns an open result card cuts its long head with … 
 });
 
 test("at 60 and 100 terminal columns result, question and answer cards render the base's bytes", (t) => {
+	trueColor(t);
 	const { card } = cards(t);
 	const terminal = densityTerminal(t, 60);
 	const result =
@@ -1026,6 +1028,7 @@ test("at 60 and 100 terminal columns result, question and answer cards render th
 });
 
 test("one result card crossing 60 terminal columns in both directions gains › narrow and renders the base's bytes wide again", (t) => {
+	trueColor(t);
 	const { card } = cards(t);
 	const terminal = densityTerminal(t, 60);
 	const component = card({ customType: "pi-workflow-child-result", details });
@@ -1040,6 +1043,7 @@ test("one result card crossing 60 terminal columns in both directions gains › 
 });
 
 test("one open result card crossing 60 terminal columns in both directions keeps its expanded body on each side", (t) => {
+	trueColor(t);
 	const { card } = cards(t);
 	const terminal = densityTerminal(t, 60);
 	const component = card({

@@ -15,6 +15,7 @@ import {
 } from "../extensions/context-backstop.ts";
 import { theme } from "../extensions/visual-language.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { trueColor } from "./support/true-color.mjs";
 import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 const piTui = await import(
@@ -206,6 +207,7 @@ test("below 60 terminal columns an expanded backstop keeps ›, the action and t
 });
 
 test("at 60 and 100 terminal columns the backstop renders the base's bytes, collapsed, with each advisor state and expanded", (t) => {
+	trueColor(t);
 	const terminal = densityTerminal(t, 60);
 	const scenarios = {
 		bare: () => card(t, facts),
@@ -230,6 +232,7 @@ test("at 60 and 100 terminal columns the backstop renders the base's bytes, coll
 });
 
 test("one backstop opened by a click and crossing 60 terminal columns in both directions switches layout on each render and stays open", (t) => {
+	trueColor(t);
 	const terminal = densityTerminal(t, 60);
 	const component = card(t, { ...facts, advisor: { turnsAgo: 0 } });
 	assert.ok(

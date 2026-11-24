@@ -962,6 +962,8 @@ test("at 60 and 100 terminal columns the transcript renders the base's bytes", (
 });
 
 test("at 60 and 100 terminal columns multi-line user and assistant messages keep the base's stamp on their first line", (t) => {
+	setCapabilityOverrides({ trueColor: true, hyperlinks: false });
+	t.after(() => setCapabilityOverrides({}));
 	const { mode, say } = chat(t);
 	const long =
 		"Review the narrow terminal layout before changing the status bar, then check the wrapping rules for long messages in every block of the transcript once more.";

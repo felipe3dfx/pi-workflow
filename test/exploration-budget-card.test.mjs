@@ -16,6 +16,7 @@ import {
 import { explorationNotice } from "../extensions/exploration-budget.ts";
 import { theme } from "../extensions/visual-language.ts";
 import { densityTerminal } from "./support/density-terminal.mjs";
+import { trueColor } from "./support/true-color.mjs";
 import { eachWideWidth, wideCards } from "./support/wide-cards.mjs";
 
 const piTui = await import(
@@ -181,6 +182,7 @@ test("below 60 terminal columns a narrower exploration notice cuts its title wit
 });
 
 test("at 60 and 100 terminal columns the exploration notice renders the base's bytes, collapsed and expanded, also after crossing 60 columns both ways", (t) => {
+	trueColor(t);
 	const terminal = densityTerminal(t, 60);
 	const opened = notice(t);
 	opened.setExpanded(true);
