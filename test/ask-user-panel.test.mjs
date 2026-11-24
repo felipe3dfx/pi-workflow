@@ -2224,6 +2224,51 @@ test("at 43x31 with selection paging remapped to j/k, j/k page the question whil
 	});
 });
 
+test("at 43x31 with paging remapped to Ctrl+Shift+Left/Right, the middle question page shows both whole paging cues within 15 rows", async (t) => {
+	densityTerminal(t, 43);
+	const tool = createAskUserChoiceTool(createFooterHints());
+	const { ctx, send, renderRaw } = tuiContext(
+		31,
+		new KeybindingsManager(TUI_KEYBINDINGS, {
+			"tui.select.pageUp": "ctrl+shift+left",
+			"tui.select.pageDown": "ctrl+shift+right",
+		}),
+	);
+	const pending = tool.execute(
+		"call-narrow-chord-paging",
+		{
+			question: `${sixLineQuestion} ${sixLineQuestion}`,
+			options: [
+				{ label: "Canary", description: "Ship to one region first." },
+				{ label: "Full rollout", description: "Ship everywhere now." },
+			],
+		},
+		undefined,
+		undefined,
+		ctx,
+	);
+	const rows = () =>
+		renderRaw(43).map((line) =>
+			stripTerminalSequences(line).replace(/^│ /, "").replace(/ *│$/, ""),
+		);
+	assert.equal(rows()[6], "Ctrl+Shift+Right ↓ 6 more");
+	send("\x1b[1;6C");
+	const middle = rows();
+	assert.equal(middle.length, 15);
+	assert.deepEqual(middle.slice(1, 9), [
+		"interrupting writes? The staging",
+		"rollout passed but two background jobs",
+		"still use the old schema, and the",
+		"nightly export reads both tables. Which",
+		"Ctrl+Shift+Left ↑ 5 more",
+		"Ctrl+Shift+Right ↓ 2 more",
+		"▸ 1  Canary",
+		"     Ship to one region first.",
+	]);
+	send("X");
+	await pending;
+});
+
 test("at 43x31 an unfocused description wraps below its label when its second row fits within half the terminal height", async (t) => {
 	densityTerminal(t, 43);
 	const tool = createAskUserChoiceTool(createFooterHints());

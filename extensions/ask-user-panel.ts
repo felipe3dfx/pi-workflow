@@ -414,20 +414,37 @@ async function askPanel(
 								const room = cap - reserved;
 								if (questionLines.length <= room || room < 2)
 									return questionLines;
-								questionPage = room - 1;
-								questionLast = questionLines.length - questionPage;
-								questionTop = Math.min(Math.max(0, questionTop), questionLast);
-								const end = questionTop + questionPage;
-								const cue = [
-									questionTop > 0 ? `${pageKey("up")}↑ ${questionTop}` : "",
-									end < questionLines.length
-										? `${pageKey("down")}↓ ${questionLines.length - end}`
-										: "",
-								].filter(Boolean);
-								return [
-									...questionLines.slice(questionTop, end),
-									theme.fg("dim", `${cue.join(" · ")} more`),
-								];
+								// Both paging cues share a row when they fit; otherwise each takes its own
+								// rows, and the question page gives up the rows they need.
+								const cueRows = (end: number) => {
+									const cue = [
+										questionTop > 0 ? `${pageKey("up")}↑ ${questionTop}` : "",
+										end < questionLines.length
+											? `${pageKey("down")}↓ ${questionLines.length - end}`
+											: "",
+									].filter(Boolean);
+									const joined = `${cue.join(" · ")} more`;
+									return visibleWidth(joined) <= contentWidth
+										? [joined]
+										: cue.flatMap((part) =>
+												wrapTextWithAnsi(`${part} more`, contentWidth),
+											);
+								};
+								for (let reserved = 1; ; reserved++) {
+									questionPage = Math.max(1, room - reserved);
+									questionLast = questionLines.length - questionPage;
+									questionTop = Math.min(
+										Math.max(0, questionTop),
+										questionLast,
+									);
+									const end = questionTop + questionPage;
+									const cue = cueRows(end);
+									if (cue.length <= reserved || questionPage === 1)
+										return [
+											...questionLines.slice(questionTop, end),
+											...cue.map((line) => theme.fg("dim", line)),
+										];
+								}
 							};
 							if (options.length === 0) {
 								const controls = [
