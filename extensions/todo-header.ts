@@ -39,6 +39,8 @@ export type TodoLayout = {
 	capacity: number;
 	page: number;
 	pageCount: number | null;
+	/** Tasks rendered on the page shown. */
+	shown: number;
 	targets: TodoHitTarget[];
 };
 
@@ -70,6 +72,7 @@ export function renderTodoBox(
 		capacity,
 		page,
 		pageCount: null,
+		shown: 0,
 		targets,
 	});
 	if (tasks.length === 0 || budget === 0) return deferred([]);
@@ -134,7 +137,14 @@ export function renderTodoBox(
 					targets,
 				}),
 			);
-		return { lines, capacity, page: effectivePage, pageCount, targets };
+		return {
+			lines,
+			capacity,
+			page: effectivePage,
+			pageCount,
+			shown: tasksOnPage.length,
+			targets,
+		};
 	}
 	const fillerWidth = Math.max(
 		0,
@@ -191,6 +201,7 @@ export function renderTodoBox(
 		capacity,
 		page: effectivePage,
 		pageCount,
+		shown: tasksOnPage.length,
 		targets,
 	};
 }

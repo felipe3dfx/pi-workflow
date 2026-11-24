@@ -1072,12 +1072,14 @@ async function pagedTodo(t, columns, count) {
 			lines,
 			first: lines.map((line) => line.match(/Task \d+/)?.[0]).find(Boolean),
 			page: lines
-				.map((line) => line.match(/All (\d+\/\d+)/)?.[1])
+				.map((line) => line.match(/(?:All|Without done) (\d+\/\d+)/)?.[1])
 				.find(Boolean),
 		};
 	};
 	const next = () => shortcuts.get("alt+shift+n").handler(ctx);
-	return { terminal, tui, widget, view, next };
+	const withoutDone = () => shortcuts.get("alt+shift+h").handler(ctx);
+	const done = (id) => execute(tools, "update", { id, state: "done" }, ctx);
+	return { terminal, tui, widget, view, next, withoutDone, done };
 }
 
 test("below 60 columns a height change that keeps the Todo capacity keeps the projected page", async (t) => {
@@ -1113,6 +1115,29 @@ test("below 60 columns a height round trip that changes the Todo capacity keeps 
 		assert.deepEqual([view().first, view().page], ["Task 9", "2/3"]);
 		terminal.columns = 60;
 		assert.deepEqual([view().first, view().page], ["Task 11", "3/4"]);
+	}
+});
+
+test("below 60 columns a saved offset whose task leaves a partial page returns to that page's first task", async (t) => {
+	for (const columns of [43, 59]) {
+		const { terminal, tui, view, next, withoutDone, done } = await pagedTodo(
+			t,
+			columns,
+			15,
+		);
+		tui.terminal.rows = 29;
+		await withoutDone();
+		view();
+		await next();
+		view();
+		await next();
+		assert.deepEqual([view().first, view().page], ["Task 15", "3/3"]);
+		tui.terminal.rows = 31;
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		await done(15);
+		assert.deepEqual([view().first, view().page], ["Task 9", "2/2"]);
+		terminal.columns = 60;
+		assert.deepEqual([view().first, view().page], ["Task 6", "2/3"]);
 	}
 });
 

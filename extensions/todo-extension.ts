@@ -174,10 +174,10 @@ export function registerSessionTodo(
 				);
 				// Deferred layouts (collapsed, compact, empty) rewrite nothing.
 				if (layout.pageCount !== null) {
-					// The saved offset stands while its task is on the page shown; a
-					// clamp or a page that cannot hold it moves it to that page.
+					// The saved offset stands while its task is rendered on the page
+					// shown; otherwise it moves to that page's first task.
 					const start = (layout.page - 1) * capacity;
-					if (offset < start || offset >= start + capacity) offset = start;
+					if (offset < start || offset >= start + layout.shown) offset = start;
 					paging = {
 						page: layout.page,
 						narrow,
