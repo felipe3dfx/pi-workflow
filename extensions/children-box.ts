@@ -11,6 +11,7 @@ import { occupyAboveInput } from "./shell.ts";
 import { terminalSafeLine } from "./terminal-safe-text.ts";
 import {
 	narrowScreen,
+	pinRight,
 	runStateMark,
 	spinnerMs,
 	spread,
@@ -87,17 +88,27 @@ function renderChildRow(
 	width: number,
 ) {
 	const step = terminalSafeLine(childStep(child));
-	// Narrow, timed out shares ✗ with failed, so its state word is reserved
-	// and the model gives way so the task stays visible (D-open-2, NS-29).
-	const timedOut = narrowScreen() && child.state === "timed out";
-	const word = timedOut
-		? ` ${runStateMark(child.state).paint(theme, "timed out")}`
-		: "";
-	const head = ` ${rowGlyph(theme, child, now)}${word} ${theme.fg("accent", child.role)} ${child.id.slice(0, 4)}`;
-	const meta = timedOut
-		? childElapsed(child, now)
-		: childMeta(child, now, width);
-	const line = spread(`${head} ${step}`, theme.fg("dim", meta), width);
+	const name = `${theme.fg("accent", child.role)} ${child.id.slice(0, 4)} ${step}`;
+	if (narrowScreen()) {
+		// Narrow rows start at column 0 and leave the model to the Fleet view, with
+		// no selection background (NS-10, NS-29); timed out shares ✗ with failed,
+		// so its state word tells them apart (D-open-2).
+		const word =
+			child.state === "timed out"
+				? ` ${runStateMark(child.state).paint(theme, "timed out")}`
+				: "";
+		const meta = child.state === "queued" ? "queued" : childElapsed(child, now);
+		return pinRight(
+			`${rowGlyph(theme, child, now)}${word} ${name}`,
+			theme.fg("dim", meta),
+			width,
+		);
+	}
+	const line = spread(
+		` ${rowGlyph(theme, child, now)} ${name}`,
+		theme.fg("dim", childMeta(child, now, width)),
+		width,
+	);
 	return active ? theme.bg("selectedBg", line) : line;
 }
 
@@ -121,17 +132,24 @@ export function renderChildrenBox(
 		.sort(byState);
 	if (rows.length === 0) return [];
 	const shown = rows.slice(0, maxRows);
-	const hint = theme.fg("dim", "alt+a view");
+	const narrow = narrowScreen();
+	const heading = narrow
+		? pinRight(childrenHeading(theme, rows), theme.fg("dim", "Alt+A"), width)
+		: spread(
+				childrenHeading(theme, rows),
+				theme.fg("dim", "alt+a view"),
+				width,
+			);
 	const lines = [
-		spread(childrenHeading(theme, rows), hint, width),
+		heading,
 		...shown.map((child, i) =>
 			renderChildRow(theme, child, now, i === 0, width),
 		),
 	];
 	if (rows.length > shown.length) {
-		const view = narrowScreen() ? "Alt+A" : "alt+a view";
+		const more = `… ${rows.length - shown.length} more ·`;
 		lines.push(
-			theme.fg("dim", ` … ${rows.length - shown.length} more · ${view}`),
+			theme.fg("dim", narrow ? `${more} Alt+A` : ` ${more} alt+a view`),
 		);
 	}
 	return lines.map((line) => truncateToWidth(line, width));

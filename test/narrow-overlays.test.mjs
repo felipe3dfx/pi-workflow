@@ -1031,13 +1031,13 @@ test("the subagents box ends its 8-row cap with … N more · Alt+A below 60 ter
 		stripVTControlCharacters(
 			renderChildrenBox(theme, boxRecords, clock, columns).at(-1),
 		);
-	assert.equal(tail(59), " … 3 more · Alt+A");
+	assert.equal(tail(59), "… 3 more · Alt+A");
 	terminal.columns = 60;
 	assert.equal(tail(60), " … 3 more · alt+a view");
 	terminal.columns = 59;
-	assert.equal(tail(59), " … 3 more · Alt+A");
+	assert.equal(tail(59), "… 3 more · Alt+A");
 	terminal.columns = 44;
-	assert.equal(tail(43), " … 3 more · Alt+A");
+	assert.equal(tail(43), "… 3 more · Alt+A");
 });
 
 test("below 60 terminal columns empty docked lists render nothing and the Todo keeps its pagination (preserved)", (t) => {
@@ -1057,11 +1057,12 @@ test("below 60 terminal columns empty docked lists render nothing and the Todo k
 		2,
 	);
 	assert.equal(paged.pageCount, 2);
-	assert.deepEqual(plain(paged.lines).slice(2, 7), [
-		`│ ○ Task 9${" ".repeat(33)}│`,
-		`│ ○ Task 10${" ".repeat(32)}│`,
-		`│ ○ Task 11${" ".repeat(32)}│`,
-		`│ ○ Task 12${" ".repeat(32)}│`,
+	assert.deepEqual(plain(paged.lines), [
+		`▾ Todo 0/12${" ".repeat(22)}Alt+Shift+T`,
+		"○ Task 9",
+		"○ Task 10",
+		"○ Task 11",
+		"○ Task 12",
 		"12/12 All 2/2 ‹ › Without done",
 	]);
 });
