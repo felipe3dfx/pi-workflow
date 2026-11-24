@@ -252,16 +252,33 @@ export function renderStatusRow(
 		[turn, counted ? tokens : ""].filter(Boolean).join(" ");
 	const needed = (l: string, r: string) =>
 		visibleWidth(l) + (r ? 1 + visibleWidth(r) : 0);
-	// Only the minute and hour formats grew, and only they hold a space.
-	const grown = `${step}${turn}`.includes(" ");
-	const whole = phase
-		? needed(left(true), right(true)) <= room
-		: visibleWidth(right(true)) < room;
-	// Overflow from a longer timer keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
+	const fits = needed(left(true), right(true)) <= room;
+	// Only the minute and hour formats grew, and only they hold a space; the
+	// base wrote `1m 05s` as `1m5s` and `1h 05m` as `1h5m`.
+	const legacy = (text: string) => text.replace(/ 0?/, "");
+	const grownBy =
+		visibleWidth(`${step}${turn}`) - visibleWidth(legacy(step) + legacy(turn));
+	const whole = phase ? fits : visibleWidth(right(true)) < room;
+	// Wide, only a row that a longer timer pushes past its room gives up fields;
+	// any other keeps them all and both timers, cutting the name as the base did.
+	const cascade = narrow
+		? grownBy > 0 || !whole
+		: !fits && needed(left(true), right(true)) - grownBy <= room;
+	const kept =
+		narrow || fits
+			? left(true)
+			: left(
+					true,
+					truncateToWidth(
+						name,
+						Math.max(0, room - needed(left(true, ""), right(true))),
+					),
+				);
 	const [l, r] =
-		!(phase || turn) || (!grown && whole)
-			? [left(true), right(true)]
-			: ([
+		!(phase || turn) || !cascade
+			? [kept, right(true)]
+			: // Overflow from a longer timer keeps both timers whole: spare space, then `Run `, then the tokens, then the name.
+				([
 					[left(true), right(true)],
 					[left(false), right(true)],
 					[left(false), right(false)],

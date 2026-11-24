@@ -997,17 +997,41 @@ test("a status row too tight for every field keeps both timers whole, dropping R
 		"   ⠋ mcp__github__list_pull_request_review_comments 1m 05s 1m 09s ⇣50",
 	);
 	assert.equal(
+		status(44, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
+		"⠋ mcp__github__list_pull_request_re… 1m 05s",
+	);
+});
+
+test("a wide status row the base already cut keeps Run, the token count and both whole timers, cutting only the name with ...", (t) => {
+	const terminal = densityTerminal(t, 60);
+	const status = (columns, data) => {
+		terminal.columns = columns;
+		return plain(
+			renderStatusRow(theme, { frame: 0, label: "Working", ...data }, columns),
+		)[0];
+	};
+	const list = "mcp__github__list_pull_request_review_comments";
+	assert.equal(
+		status(64, {
+			tool: list,
+			stepMs: 12_000,
+			turnMs: 45_000,
+			outputTokens: 3_000,
+		}),
+		"   ⠋ Run mcp__github__list_pull_request_revie... 12s 45s ⇣3.00k",
+	);
+	assert.equal(
+		status(60, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
+		"   ⠋ Run mcp__github__list_pull_request_re... 1m 05s ⇣3.00k",
+	);
+	assert.equal(
 		status(70, {
 			tool: list,
 			stepMs: 65_000,
 			turnMs: 69_000,
 			outputTokens: 3_000,
 		}),
-		"   ⠋ mcp__github__list_pull_request_review_comments 1m 05s     1m 09s",
-	);
-	assert.equal(
-		status(44, { tool: list, turnMs: 65_000, outputTokens: 3_000 }),
-		"⠋ mcp__github__list_pull_request_re… 1m 05s",
+		"   ⠋ Run mcp__github__list_pull_request_revie... 1m 05s 1m 09s ⇣3.00k",
 	);
 	assert.equal(
 		status(70, {
@@ -1016,7 +1040,7 @@ test("a status row too tight for every field keeps both timers whole, dropping R
 			turnMs: 69_000,
 			outputTokens: 50,
 		}),
-		"   ⠋ mcp__github__list_pull_request_review_comments_an… 1m 05s 1m 09s",
+		"   ⠋ Run mcp__github__list_pull_request_review_c... 1m 05s 1m 09s ⇣50",
 	);
 });
 
