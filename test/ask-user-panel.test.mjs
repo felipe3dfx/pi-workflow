@@ -2224,7 +2224,7 @@ test("at 43x31 with selection paging remapped to j/k, j/k page the question whil
 	});
 });
 
-test("at 43x31 with paging remapped to Ctrl+Shift+Left/Right, the middle question page shows both whole paging cues within 15 rows", async (t) => {
+test("at 43x31 with paging remapped to Ctrl+Shift+Left/Right, question pages keep the same boundaries both ways and show whole paging cues within 15 rows", async (t) => {
 	densityTerminal(t, 43);
 	const tool = createAskUserChoiceTool(createFooterHints());
 	const { ctx, send, renderRaw } = tuiContext(
@@ -2251,20 +2251,45 @@ test("at 43x31 with paging remapped to Ctrl+Shift+Left/Right, the middle questio
 		renderRaw(43).map((line) =>
 			stripTerminalSequences(line).replace(/^│ /, "").replace(/ *│$/, ""),
 		);
-	assert.equal(rows()[6], "Ctrl+Shift+Right ↓ 6 more");
-	send("\x1b[1;6C");
-	const middle = rows();
-	assert.equal(middle.length, 15);
-	assert.deepEqual(middle.slice(1, 9), [
+	const lines = [
+		"The staging rollout passed but two",
+		"background jobs still use the old",
+		"schema, and the nightly export reads",
+		"both tables. Which rollout should we",
+		"use so we can deploy today without",
 		"interrupting writes? The staging",
 		"rollout passed but two background jobs",
 		"still use the old schema, and the",
 		"nightly export reads both tables. Which",
-		"Ctrl+Shift+Left ↑ 5 more",
-		"Ctrl+Shift+Right ↓ 2 more",
-		"▸ 1  Canary",
-		"     Ship to one region first.",
-	]);
+		"rollout should we use so we can deploy",
+		"today without interrupting writes?",
+	];
+	const left = "\x1b[1;6D";
+	const right = "\x1b[1;6C";
+	// Each page shows its question lines, its whole cues, then the focused choice.
+	const page = (first, last, cues) => {
+		const shown = rows();
+		assert.ok(shown.length <= 15, `${shown.length} rows`);
+		assert.deepEqual(shown.slice(1, 1 + last - first + 1 + cues.length), [
+			...lines.slice(first - 1, last),
+			...cues,
+		]);
+		assert.ok(shown.includes("▸ 1  Canary"));
+	};
+	const pageOne = () => page(1, 4, ["Ctrl+Shift+Right ↓ 7 more"]);
+	pageOne();
+	send(right);
+	page(5, 8, ["Ctrl+Shift+Left ↑ 4 more", "Ctrl+Shift+Right ↓ 3 more"]);
+	assert.equal(rows().length, 15);
+	send(left);
+	pageOne();
+	send(right);
+	send(right);
+	page(8, 11, ["Ctrl+Shift+Left ↑ 7 more"]);
+	send(left);
+	page(4, 7, ["Ctrl+Shift+Left ↑ 3 more", "Ctrl+Shift+Right ↓ 4 more"]);
+	send(left);
+	pageOne();
 	send("X");
 	await pending;
 });
