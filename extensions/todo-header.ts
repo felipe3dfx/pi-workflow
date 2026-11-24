@@ -42,6 +42,14 @@ export type TodoLayout = {
 	targets: TodoHitTarget[];
 };
 
+/** Tasks per page at `terminalRows`, under the live density terminal. */
+export function todoCapacity(terminalRows: number): number {
+	const budget = Math.max(0, Math.floor(terminalRows / 3));
+	// Narrow, the Todo has no frame or blank rows: its heading and control row
+	// are the only overhead (NS-28).
+	return Math.max(0, Math.min(8, budget - (narrowScreen() ? 2 : 5)));
+}
+
 /** Coordinates are zero-based logical cells; end is exclusive. */
 export function renderTodoBox(
 	theme: TodoTheme,
@@ -54,10 +62,8 @@ export function renderTodoBox(
 ): TodoLayout {
 	const safeWidth = Math.max(0, Math.floor(width));
 	const budget = Math.max(0, Math.floor(terminalRows / 3));
-	// Narrow, the Todo has no frame or blank rows: its heading and control row
-	// are the only overhead (NS-28).
 	const narrow = narrowScreen();
-	const capacity = Math.max(0, Math.min(8, budget - (narrow ? 2 : 5)));
+	const capacity = todoCapacity(terminalRows);
 	const targets: TodoHitTarget[] = [];
 	const deferred = (lines: string[]): TodoLayout => ({
 		lines,

@@ -1024,4 +1024,22 @@ test("below 60 terminal columns a tap on the ▾ Todo heading collapses it like 
 		(await execute(tools, "list", {}, ctx)).details.tasks.length,
 		12,
 	);
+
+	// A width-only crossing keeps the browsing position on the final wide page.
+	terminal.columns = 60;
+	widget.render(60);
+	await shortcuts.get("alt+shift+n").handler(ctx);
+	const finalPage = () => {
+		const wide = widget.render(60);
+		return [wide[2], wide.find((line) => line.includes("/3 "))];
+	};
+	const before = finalPage();
+	assert.equal(before[0], `│ □ Task 11${" ".repeat(48)}│`);
+	assert.match(before[1], / 3\/3 /);
+	for (const columns of [43, 59]) {
+		terminal.columns = columns;
+		assert.equal(widget.render(columns)[1], "○ Task 9");
+		terminal.columns = 60;
+		assert.deepEqual(finalPage(), before);
+	}
 });

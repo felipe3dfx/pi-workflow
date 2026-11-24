@@ -9,6 +9,7 @@ import { occupyAboveInput, seated } from "./shell.ts";
 import { offerTool } from "./tool-offer.ts";
 import {
 	renderTodoBox,
+	todoCapacity,
 	type TaskExecutors,
 	type TodoBoxState,
 	type TodoHitTarget,
@@ -106,7 +107,13 @@ export function registerSessionTodo(
 ) {
 	const todoList = createTodoList();
 	const boxState: TodoBoxState = { collapsed: false, showDone: true };
-	let page = 1;
+	// The browsing position: `page` at `capacity` tasks per page under `rows`
+	// terminal rows. A width-only reflow displays the page holding this task
+	// offset without rewriting it, so crossing back restores the page (NS-02);
+	// `shown` is the page last displayed, which navigation moves from.
+	type Position = { page: number; capacity: number; rows: number };
+	let anchor: Position = { page: 1, capacity: 0, rows: 0 };
+	let shown = anchor;
 	let pageCount: number | null = null;
 	let targets: TodoHitTarget[] = [];
 	function act(action: TodoHitAction) {
@@ -120,13 +127,14 @@ export function registerSessionTodo(
 				break;
 			case "filter":
 				boxState.showDone = !boxState.showDone;
-				page = 1;
+				anchor = { ...anchor, page: 1 };
 				break;
 			case "previous":
-				page = Math.max(1, page - 1);
+				anchor = { ...shown, page: Math.max(1, shown.page - 1) };
 				break;
 			case "next":
-				if (pageCount !== null) page = Math.min(pageCount, page + 1);
+				if (pageCount !== null)
+					anchor = { ...shown, page: Math.min(pageCount, shown.page + 1) };
 				break;
 		}
 		requestRender();
@@ -135,6 +143,15 @@ export function registerSessionTodo(
 		occupyAboveInput(
 			"todo",
 			(width, theme, rows) => {
+				const capacity = todoCapacity(rows);
+				const reflow =
+					rows === anchor.rows &&
+					capacity > 0 &&
+					anchor.capacity > 0 &&
+					capacity !== anchor.capacity;
+				const page = reflow
+					? Math.floor(((anchor.page - 1) * anchor.capacity) / capacity) + 1
+					: anchor.page;
 				const layout = renderTodoBox(
 					theme,
 					todoList.list(),
@@ -144,8 +161,13 @@ export function registerSessionTodo(
 					rows,
 					page,
 				);
-				page = layout.page;
-				if (layout.pageCount !== null) pageCount = layout.pageCount;
+				if (layout.pageCount === null) shown = anchor;
+				else {
+					pageCount = layout.pageCount;
+					shown = { page: layout.page, capacity: layout.capacity, rows };
+					// Data and height changes persist their clamp; a reflow keeps its anchor.
+					if (!reflow || layout.page !== page) anchor = shown;
+				}
 				targets = layout.targets;
 				return layout.lines;
 			},
