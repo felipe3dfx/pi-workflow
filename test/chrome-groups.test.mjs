@@ -828,6 +828,23 @@ test("below 60 terminal columns a wrapping Asked question hangs under its first 
 	assert.deepEqual(block(59), wide);
 });
 
+test("below 60 terminal columns an Asked question that opens with a newline still hangs under its first word", (t) => {
+	const { mode, render } = chat(t);
+	densityTerminal(t, 44);
+	asked(
+		mode,
+		"\nWhich rollout should we use for the narrow layout on the phone?",
+		"Gradual rollout",
+	);
+	const lines = render(43).map((line) => line.trimEnd());
+	const head = lines.findIndex((line) => line.includes("Asked"));
+	assert.deepEqual(lines.slice(head, head + 3), [
+		"◆ Asked Which rollout should we use for",
+		"        the narrow layout on the phone?",
+		"↳ Gradual rollout",
+	]);
+});
+
 test("at 60 and 100 terminal columns the selection background reaches the last column", (t) => {
 	const { mode } = transcript(t);
 	t.after(() => transcriptCursor.leave());

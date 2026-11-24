@@ -506,11 +506,10 @@ function askRenderers() {
 				render(width: number) {
 					const narrow = narrowScreen();
 					const indent = narrow ? "" : "  ";
-					// Narrow, the wrapped question hangs under its first word (NS-23).
 					const hang = " ".repeat(visibleWidth(label));
 					const head = narrow
 						? `${label}${wrapTextWithAnsi(
-								theme.fg("dim", question),
+								theme.fg("dim", question.trimStart()),
 								Math.max(1, width - hang.length),
 							).join(`\n${hang}`)}`
 						: `${label}${theme.fg("dim", question)}`;
