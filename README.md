@@ -40,7 +40,7 @@ When Pi runs inside a Herdr pane, the top-level TUI session reports its agent st
 
 ## Shell commands start a turn
 
-In the top-level TUI session, a `!cmd` command starts an agent turn after it finishes, so the agent reacts to its output, which enters the context once as Pi's own record. A non-zero exit still starts the turn; a cancelled command, a command that cannot run, and `!!cmd` do not. When the agent is working, the turn starts once it settles, one turn for every command that finished meanwhile. Child sessions and RPC, JSON, or print modes keep Pi's behavior. Implementation: [`extensions/user-bash-turn.ts`](extensions/user-bash-turn.ts); tests: [`test/user-bash-turn.test.mjs`](test/user-bash-turn.test.mjs).
+In the top-level TUI session, a `!cmd` command starts an agent turn after it finishes, so the agent reacts to its output, which enters the context once as Pi's own record. A non-zero exit still starts the turn; a cancelled command, a command that cannot run, and `!!cmd` do not. When the agent is working, the turn starts once it settles, a single turn for all commands that finished while the agent was working. Child sessions and RPC, JSON, or print modes keep Pi's behavior. Implementation: [`extensions/user-bash-turn.ts`](extensions/user-bash-turn.ts); tests: [`test/user-bash-turn.test.mjs`](test/user-bash-turn.test.mjs).
 
 ## Contextual integration (unadopted)
 

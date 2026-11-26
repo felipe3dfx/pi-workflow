@@ -6,7 +6,6 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 
-import { USER_BASH_TURN_TYPE } from "../extensions/user-bash-turn.ts";
 import { withAgentDirectory } from "./support/agent-directory.mjs";
 import { eventually } from "./support/eventually.mjs";
 import { realParent } from "./support/workflow-parent.mjs";
@@ -31,7 +30,7 @@ async function tuiParent(t, responses, options = {}) {
 }
 
 // The interactive mode's `!` path: emit user_bash, then execute with the operations it returned.
-async function bang(session, command, excludeFromContext = false) {
+async function bang(session, command, excludeFromContext = false, onChunk) {
 	const handled = await session.extensionRunner.emitUserBash({
 		type: "user_bash",
 		command,
@@ -39,7 +38,7 @@ async function bang(session, command, excludeFromContext = false) {
 		cwd: session.sessionManager.getCwd(),
 	});
 	assert.equal(handled?.result, undefined);
-	return session.executeBash(command, undefined, {
+	return session.executeBash(command, onChunk, {
 		excludeFromContext,
 		operations: handled?.operations,
 	});
@@ -88,10 +87,14 @@ test("a `!` command run while idle starts a turn whose context holds its output 
 		(n) => n === 1,
 	);
 	assertReactsTo(requests[0], "idle-out");
-	const trigger = session.sessionManager
+	const triggers = session.sessionManager
 		.getEntries()
-		.find((entry) => entry.customType === USER_BASH_TURN_TYPE);
-	assert.equal(trigger?.display, false);
+		.filter(
+			(entry) =>
+				entry.type === "custom_message" && /shell command/i.test(entry.content),
+		);
+	assert.equal(triggers.length, 1);
+	assert.equal(triggers[0].display, false, "the trigger is not displayed");
 });
 
 test("a `!` command that exits non-zero still starts a turn", async (t) => {
@@ -141,11 +144,70 @@ test("`!` commands that finish while the agent works start one turn after it set
 	assert.equal(requests.length, 2, "the commands coalesce into one turn");
 });
 
-test("a `!!` command never starts a turn", async (t) => {
+test("`!` commands that finish just before the agent settles still start a single turn", async (t) => {
+	let release;
+	const held = new Promise((resolve) => {
+		release = resolve;
+	});
+	const { session, requests } = await tuiParent(t, [
+		async () => {
+			await held;
+			return fauxAssistantMessage("first");
+		},
+		fauxAssistantMessage("reacted"),
+		fauxAssistantMessage("extra"),
+	]);
+	const prompt = session.prompt("hello");
+	await eventually(
+		() => requests.length,
+		(n) => n === 1,
+	);
+	await bang(session, "printf '%s-%s' late one");
+	await bang(session, "printf '%s-%s' late two");
+	release();
+	await prompt;
+	await eventually(
+		() => requests.length,
+		(n) => n === 2,
+	);
+	assertReactsTo(requests[1], "late-one", "late-two");
+	await eventually(() => session.isIdle);
+	await quiet();
+	assert.equal(requests.length, 2, "the commands coalesce into one turn");
+});
+
+test("a `!!` command never starts a turn and stays out of the next request", async (t) => {
+	const { session, requests } = await tuiParent(t, [
+		fauxAssistantMessage("answered"),
+	]);
+	await bang(session, "printf '%s-%s' hidden out", true);
+	await quiet();
+	assert.equal(requests.length, 0);
+	await session.prompt("hello");
+	assert.equal(requests.length, 1);
+	assert.ok(texts(requests[0]).some((text) => text.includes("hello")));
+	assert.ok(!texts(requests[0]).some((text) => text.includes("hidden-out")));
+});
+
+test("a `!` command streams its output while running and Esc's abort cancels it without a turn", async (t) => {
 	const { session, requests } = await tuiParent(t, [
 		fauxAssistantMessage("reacted"),
 	]);
-	await bang(session, "printf hidden", true);
+	const chunks = [];
+	const running = bang(
+		session,
+		"printf '%s-%s' streamed out; sleep 5",
+		false,
+		(chunk) => chunks.push(chunk),
+	);
+	await eventually(
+		() => chunks.join(""),
+		(output) => output.includes("streamed-out"),
+	);
+	assert.equal(session.isBashRunning, true, "output arrives before exit");
+	session.abortBash();
+	const result = await running;
+	assert.equal(result.cancelled, true);
 	await quiet();
 	assert.equal(requests.length, 0);
 });
@@ -203,18 +265,24 @@ test("a `!` command whose session ends before the trigger leaves no failure behi
 });
 
 test("outside the TUI or inside a child tree, `!` stays Pi's own", async (t) => {
-	treeMark(t, undefined);
-	const rpc = await realParent(t, withAgentDirectory(t), []);
+	for (const mode of ["rpc", "print", "json"]) {
+		treeMark(t, undefined);
+		const { session, requests } = await realParent(
+			t,
+			withAgentDirectory(t),
+			[fauxAssistantMessage("reacted")],
+			{ mode },
+		);
+		await bang(session, "printf '%s-%s' plain out");
+		await quiet();
+		assert.equal(requests.length, 0, `${mode} starts no turn`);
+	}
 	const event = {
 		type: "user_bash",
 		command: "true",
 		excludeFromContext: false,
-		cwd: rpc.worktree,
+		cwd: process.cwd(),
 	};
-	assert.equal(
-		await rpc.session.extensionRunner.emitUserBash(event),
-		undefined,
-	);
 	const child = await tuiParent(t, []);
 	process.env[tree] = "token/id/";
 	assert.equal(
