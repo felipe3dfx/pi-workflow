@@ -105,7 +105,7 @@ export async function realParent(
 	t,
 	dir,
 	responses,
-	{ extensionFactories = [], models = false, settings } = {},
+	{ extensionFactories = [], models = false, settings, mode = "rpc" } = {},
 ) {
 	const worktree = await gitRepository(dir);
 	const runtime = await ModelRuntime.create({
@@ -158,6 +158,6 @@ export async function realParent(
 		sessionManager: SessionManager.inMemory(worktree),
 	});
 	t.after(() => session.dispose());
-	await session.bindExtensions({ mode: "rpc" });
+	await session.bindExtensions({ mode });
 	return { session, requests, children, worktree };
 }

@@ -53,6 +53,7 @@ import { registerChildrenBox } from "./children-box.ts";
 import { childrenEvent, createChildrenSignal } from "./children-event.ts";
 import { registerHerdrAgent } from "./herdr-agent.ts";
 import { insideChildTree } from "./process-tree.ts";
+import { registerUserBashTurn } from "./user-bash-turn.ts";
 import { pruneChildSessions } from "./rpc-child.ts";
 import { createFooterHints, registerChrome } from "./chrome.ts";
 import { createChildrenViews } from "./children-view.ts";
@@ -243,6 +244,7 @@ export default function piWorkflowExtension(
 			);
 	if (childrenSignal) childSessions.subscribe(childrenSignal.changed);
 	registerHerdrAgent(pi, { agentDirectory });
+	registerUserBashTurn(pi);
 	pi.on("turn_end", () => childSessions.atBoundary());
 	pi.on("agent_settled", () => childSessions.atBoundary());
 	const childrenViews = createChildrenViews(childSessions, audit, todo);
