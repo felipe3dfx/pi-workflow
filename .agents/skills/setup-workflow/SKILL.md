@@ -4,7 +4,7 @@ description: "Trigger: configure repository workflow playbooks or audit existing
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "2.17"
+  version: "2.18"
   provenance: derived
 ---
 

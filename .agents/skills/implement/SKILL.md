@@ -4,7 +4,7 @@ description: "Trigger: implement one approved ticket from the tracker. Build it 
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "4.10"
+  version: "4.11"
   provenance: derived
 ---
 
@@ -37,7 +37,7 @@ Scope prerequisites by phase and report discovered future limitations. Read [mis
 1. **Seams.** Load the `tdd` skill. Before testing, propose and agree with the developer, where policy asks, seams, each required behavior's coverage line, and lines `tdd` completes later; trace every ticket requirement to a line. Without a valuable seam, record `tdd`'s exception.
 2. **Build.** Drive `tdd` at agreed seams. Regularly run type and focused checks through the quality playbook's Focused Validation path on touched areas and affected callers and consumers. Edit through the file-editing capability, failing on target mismatch; shell rewrites use only project formatters and codemods. Recover failed edits or checks until the candidate functions. After GREEN, simplify once in this context, keeping the simplest sufficient seams; close with green focused checks.
 3. **Checkpoint.** Before first review and after each fix, commit locally with the pull-request playbook's fixed commit template. Surface a signing failure as is, never bypassing it; warn once per ticket on an unsigned head to configure signing. Never run the full suite; `create-pr` runs the publication gate. A local commit is not an external effect; pushing is.
-4. **Review.** Give a context other than the implementer's "Load the `code-review` skill", the checkpoint head, and agreed coverage lines with tracing; review against the ticket's fixed base. First and post-rebase reviews are full; others are corrective, receiving the last reviewed head and prior findings with state. Apply the scratch evidence gate here; Standards and Spec still report if Valuable Tests blocks. A blocked axis stops the ticket for the developer, except missing evidence the developer accepts, which continues through steps 5–6 to the handoff.
+4. **Review.** Give a context other than the implementer's "Load the `code-review` skill", the checkpoint head, and agreed coverage lines with tracing; review against the ticket's fixed base. First and post-rebase reviews are full; others are corrective, receiving the last reviewed head and prior findings with state. Apply the scratch evidence gate here; Standards and Spec still report if Valuable Tests blocks. A blocked axis stops the ticket for the developer, except accepted missing evidence.
 5. **Critique.** Load the `review-critique` skill and run it on the review report. Never ask the developer about ordinary findings between reviews; approvals, scope expansions, and accepted risks not already answered still stop immediately.
 6. **Fix.** Apply only the accepted findings, in a fresh context other than the implementer's, rerun focused checks, checkpoint, and review again. A round makes at most two automatic review invocations; the second's accepted findings stay open. When it closes, take to the developer only the `user decision` and still-open accepted findings; show the rejected ones, which need no answer. A further fix the developer approves gets a fresh review of its own head.
 
@@ -58,6 +58,7 @@ A prose handoff with:
 - each finding ID with its verdict and the critique's evidence or reason for it, the developer's answer where needed, and what was applied;
 - the Work Contract with its sources and approval;
 - decisions, deviations, accepted risks, and the approved issue comments;
-- blockers or the cancellation point.
+- blockers or the cancellation point;
+- misses, if any; read [retrospective](references/retrospective.md) first.
 
 Complete only with green focused checks, the tracing table, every finding rejected, applied, or decided by the developer, and the head's review report. Next: `create-pr` publishes the branch, and `qa-impact` runs on the pushed head; as a `direct` child, `implement-spec` integrates it instead.

@@ -129,7 +129,7 @@ A missing or unresolved policy is `every-step`; tell the user once to run `setup
 
 The policy governs approvals, not decisions. Where the agent has a grounded recommendation, `autonomous` applies it and records it in the final report; a decision that needs what only the user has, such as product intent, risk acceptance, or a finding that needs the user's intent, is always asked. A sub-agent never asks for approval: it returns its drafts to the orchestrator, which presents them under the policy.
 
-Approval preview: before asking for any approval, show in the conversation the complete literal content, its destination (repository and pull request, ticket, or file path), and the action (create, edit, close, merge, and so on). A question never replaces the content.
+Approval preview: before asking for any approval, show in the conversation the complete literal content, its destination (repository and pull request, ticket, or file path), and the action (create, edit, close, merge, and so on); a file to upload is shown by its path and role, never by its content, beside the literal body that links it. A question never replaces the content.
 
 Approval is per effect, given by the person performing it, and its evidence is preserved with the pull request or its linked ticket. The playbook names no approver. Under `direct` child integration, the batch rule, approved wherever the policy asks, is the approval, and its evidence, for the child-ticket closures it covers; the per-invocation plan `create-pr` requires is that skill's own contract.
 

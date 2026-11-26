@@ -4,7 +4,7 @@ description: "Trigger: turn a published technical specification into approved, i
 license: MIT
 metadata:
   author: "Grupo Ilao"
-  version: "1.8"
+  version: "1.9"
   provenance: derived
 ---
 

@@ -36,9 +36,15 @@ Do not invent a team, project, label, or state when a marker remains unresolved.
 
 For the tickets of a specification, the specification's parent wins over a `parent` required by the fields above; the parent issue itself still follows those fields.
 
+## Ticket Body and Agent Attachments
+
+A ticket has two readers. The body is for a person who does not read the code: a Spanish summary in domain language with nothing the reader would have to look up in the code, so it names no code identifier, no secret or configuration key, and no decision code. Whatever is written for an agent, such as the technical specification, the brief, the review report, or a ticket's implementation detail, is a file linked from the body by its role; it is never the body and never a comment, and a collapsible section of the description is still the body. The publishing skill names the files a ticket carries.
+
+Upload each file through the confirmed access mechanism, from the local file and never by retyping its content, and add the link the upload returns to the description. A download URL is signed and expires within minutes: fetch the issue again immediately before downloading. A ticket's files are published only when its description links each expected file and each one, downloaded, is identical to the local file.
+
 ## When a Skill Says "Fetch the Relevant Ticket"
 
-Retrieve the issue description, comments, state, priority, labels, project, parent and child relationships, assignee, and linked artifacts. Retrieve its blocked-by relations with each blocker's current state: the parent relationship alone is not a blocker, and only a blocker not yet completed or canceled blocks the issue. Treat the fetched issue as the source of truth for the requested work.
+Retrieve the issue description, comments, state, priority, labels, project, parent and child relationships, assignee, and linked artifacts. Retrieve its blocked-by relations with each blocker's current state: the parent relationship alone is not a blocker, and only a blocker not yet completed or canceled blocks the issue. Treat the fetched issue as the source of truth for the requested work. Download and read, as Ticket Body and Agent Attachments defines, every file linked from the issue description and from its parent's description before acting on the ticket; a linked file that cannot be read blocks the invocation.
 
 Read capability:
 

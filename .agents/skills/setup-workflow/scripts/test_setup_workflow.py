@@ -1490,6 +1490,7 @@ class SetupWorkflowCliTests(unittest.TestCase):
             "feat(renewals): add premium calculation (AUT-103)",
             "the source is the child ticket branch; the proposed destination is the parent integration branch, or the production base for a parent integration branch",
             "no skill or tracker automation closes a specification's parent ticket",
+            "a file to upload is shown by its path and role, never by its content",
         ):
             self.assertIn(required, playbook)
         self.assertNotIn("{{COMMIT_CONVENTION}}", playbook)
@@ -1596,6 +1597,58 @@ class SetupWorkflowCliTests(unittest.TestCase):
                 for phrase in phrases:
                     self.assertIn(phrase, updated)
                 self.assertIn(f"{policy_tokens[tracker]} value", updated)
+
+    def test_update_ships_the_ticket_body_and_agent_attachment_rule_only_for_linear(
+        self,
+    ) -> None:
+        self.use_real_assets()
+        heading = "## Ticket Body and Agent Attachments"
+        linear_phrases = (
+            heading,
+            "The body is for a person who does not read the code",
+            "never the body and never a comment",
+            "identical to the local file",
+            "a linked file that cannot be read blocks the invocation",
+            "fetch the issue again immediately before downloading",
+        )
+        none = (REAL_ASSETS / "issue-tracker-none.md").read_text(encoding="utf-8")
+        self.assertNotIn(heading, none)
+        for tracker in ("linear", "github", "gitlab", "local-markdown"):
+            with self.subTest(tracker=tracker):
+                values = self.write_values(f"{tracker}.txt", self.tracker_values(tracker))
+                playbook = self.repo / "docs" / "agents" / "issue-tracker.md"
+                playbook.unlink(missing_ok=True)
+                arguments = (
+                    "--assets",
+                    str(REAL_ASSETS),
+                    "--values",
+                    str(values),
+                    "--tracker",
+                    tracker,
+                    "--repo",
+                    str(self.repo),
+                    "--approve",
+                    "issue-tracker.md",
+                )
+
+                created = self.run_script("update", *arguments)
+
+                self.assertEqual(created.returncode, 0, created.stderr)
+                rendered = playbook.read_text(encoding="utf-8")
+                if tracker != "linear":
+                    self.assertNotIn(heading, rendered)
+                    continue
+                for phrase in linear_phrases:
+                    self.assertIn(phrase, rendered)
+
+                start = rendered.index(heading)
+                end = rendered.index("\n## ", start + len(heading))
+                playbook.write_text(rendered[:start] + rendered[end + 1 :], encoding="utf-8")
+
+                update = self.run_script("update", *arguments)
+
+                self.assertEqual(update.returncode, 0, update.stderr)
+                self.assertEqual(playbook.read_text(encoding="utf-8"), rendered)
 
     def test_update_keeps_a_recorded_comment_policy_across_the_reworded_sentence(self) -> None:
         self.use_real_assets()
